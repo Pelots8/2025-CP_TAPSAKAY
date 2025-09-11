@@ -1,0 +1,150 @@
+/* ---------- Responsive root & tokens ---------- */
+/* Set root font-size fluidly (affects rem everywhere). */
+body, html, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: #0A4E99;  /* global background color */
+  font-family: 'Poppins', sans-serif;
+  color: #fff;
+}
+
+
+html {
+  /* min 14px, ideal 2.6vw, max 16px */
+  font-size: clamp(14px, 2.6vw, 16px);
+  -webkit-text-size-adjust: 100%;
+}
+
+/* design tokens (you can tweak) */
+:root{
+  --app-max-w: 420px;           /* max app content width */
+  --card-radius: 14px;
+  --accent: #2563EB;
+  --accent-2: #10B981;
+  --muted: #6B7280;
+}
+
+body{
+  background-color: #0A4E99;
+}
+
+/* ---------- App frame centered like a phone ---------- */
+.app-frame {
+  margin: 16px auto;
+  width: calc(100% - 32px);
+  max-width: var(--app-max-w);
+  min-height: calc(100vh - 32px);
+  padding-bottom: calc(72px + env(safe-area-inset-bottom)); /* room for bottom nav + notch */
+  box-sizing: border-box;
+}
+
+/* ---------- Logo (top center) ---------- */
+/* height uses clamp so it scales across small → large screens */
+.header img {
+  height: clamp(36px, 8vw, 56px);  /* min 36px, scales with viewport, max 56px */
+  width: auto;
+  display: block;
+}
+
+/* ---------- Typography ---------- */
+/* Use rems so sizes scale with root font-size */
+.h1 { font-size: 1.375rem; /* ~22px at 16px root */ font-weight:700; }
+.h2 { font-size: 1rem;      /* ~16px */ font-weight:600; }
+.text-sm { font-size: 0.875rem; color: var(--muted); }
+
+/* ---------- Cards & spacing ---------- */
+.card {
+  background:#76A3E9;
+  border-radius: var(--card-radius);
+  padding: clamp(10px, 2.8vw, 20px); /* fluid padding */
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  margin: 10px 0;
+}
+
+/* ---------- Inputs & Buttons ---------- */
+/* sizing uses rem and clamp */
+.input {
+  padding: clamp(10px, 2.5vw, 14px);
+  border-radius: 12px;
+  font-size: 0.95rem;
+}
+.btn {
+  padding: clamp(10px, 2.5vw, 14px) clamp(12px, 3.5vw, 18px);
+  border-radius: 12px;
+  font-weight:600;
+  font-size: 0.95rem;
+}
+
+/* ---------- Map placeholder sizing ---------- */
+.map-placeholder {
+  position: relative;
+  width: 93%;
+  height: clamp(160px, 36vw, 320px); /* min 160, scales, max 320 */
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* make any img responsive and crisp */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+}
+
+/* Use high-resolution assets for retina; CSS fallback if needed */
+.logo-img { width: auto; height: clamp(36px, 8vw, 56px); }
+
+/* ---------- Bottom nav (safe area aware) ---------- */
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 30;
+  display:flex;
+  justify-content:center;
+}
+.bottom-nav-inner {
+  width: calc(100% - 40px);
+  max-width: var(--app-max-w);
+  padding: clamp(8px, 2vw, 12px);
+  border-radius: 24px;
+  display:flex;
+  justify-content:space-between;
+  gap: clamp(8px, 2vw, 12px);
+}
+
+/* ---------- Utility responsive helpers ---------- */
+.row { display:flex; gap:12px; align-items:center; }
+.space-between { display:flex; justify-content:space-between; align-items:center; }
+
+/* ---------- Breakpoint refinement ---------- */
+/* At tablet and up we might increase spacing and font-size slightly */
+@media (min-width: 768px) {
+  :root { --app-max-w: 720px; }
+  .h1 { font-size: 1.5rem; }
+  .card { padding: 20px; }
+  .map-placeholder { height: 360px; }
+}
+
+.login-card {
+  background: #183351 !important; /* dark navy for login */
+  color: #fff; /* white text inside */
+}
+.login-card input,
+.login-card .btn {
+  background: #fff;   /* keep inputs readable */
+  color: #000;        /* dark text inside input */
+}
+
+a {
+  color: #ffffff;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+  color: #d6d8ff;
+}
