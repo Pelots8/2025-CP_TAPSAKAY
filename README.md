@@ -1,2 +1,4 @@
 *Required*
-npm install
+first "npm install"
+then "npm run dev"
+

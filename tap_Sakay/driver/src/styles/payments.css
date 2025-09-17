@@ -1,0 +1,24 @@
+.earnings-container {
+  padding: 2rem;
+  font-family: 'Poppins', sans-serif;
+  background: url("/assets/earnings-bg.jpg") no-repeat center center/cover;
+  background-color: rgba(255,255,255,0.6);
+  background-blend-mode: lighten;
+  min-height: 100vh;
+}
+
+.earnings-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+
+.earnings-total {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #0A4E99;
+  text-align: center;
+  margin-bottom: 1rem;
+}
