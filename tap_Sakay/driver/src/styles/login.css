@@ -1,0 +1,121 @@
+.login-root {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: url('/assets/bg.png') no-repeat center center / cover;
+  font-family: 'Poppins', sans-serif;
+  padding: 1rem;
+  overflow: hidden; /* ensures overlay doesn’t scroll */
+}
+
+/* White overlay on top of the background */
+.login-root::before {
+  content: "";
+  position: absolute;
+  inset: 0; /* shorthand for top:0; right:0; bottom:0; left:0 */
+  background: rgba(255, 255, 255, 0.6); /* white overlay with transparency */
+  z-index: 0;
+}
+/* White login card */
+.login-card {
+  position: relative;
+  z-index: 1;
+  background: #20456E;
+  padding: 20px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Logo */
+.login-logo img {
+  width: 80px;
+  height: auto;
+  margin-bottom: 1rem;
+}
+
+/* Title */
+.login-title {
+  margin-bottom: 1.5rem;
+  color: white;
+  font-size: 1.4rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Form fields */
+.form-group {
+  width: 100%;
+  margin-bottom: 1.2rem;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+  color: white;
+}
+
+.form-group input {
+  width: 340px;
+  padding: 0.75rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.form-group input:focus {
+  border-color: #0077cc;
+  box-shadow: 0 0 0 2px rgba(0,119,204,0.2);
+}
+
+/* Button */
+.login-card button {
+  width: 100%;
+  padding: 0.9rem;
+  border: none;
+  border-radius: 8px;
+  background: #0077cc;
+  color: white;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.login-card button:hover:not(:disabled) {
+  background: #005fa3;
+}
+
+.login-card button:disabled {
+  background: #999;
+  cursor: not-allowed;
+}
+
+/* Error message */
+.error {
+  margin-top: 1rem;
+  color: red;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+/* Notes */
+.login-note {
+  margin-top: 1.5rem;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #b8b8b8;
+}
+
+.login-note .muted {
+  font-size: 0.75rem;
+  color: #888;
+}
