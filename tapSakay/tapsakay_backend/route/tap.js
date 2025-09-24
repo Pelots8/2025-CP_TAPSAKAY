@@ -1,0 +1,21 @@
+name: tapsakay_unified
+description: TapSakay unified passenger & driver (Flutter)
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=2.18.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.0.5
+  dio: ^5.1.2
+  flutter_secure_storage: ^8.0.0
+  socket_io_client: ^2.0.0
+  flutter_nfc_kit: ^4.0.0
+  intl: ^0.18.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
