@@ -1,2 +1,1 @@
-*Required*
-npm install
+We swap to flutter(frontend) + supabase(backend)
