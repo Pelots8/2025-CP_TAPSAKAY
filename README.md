@@ -1,1 +1,3 @@
-We swap to flutter(frontend) + supabase(backend)
+TapSakay
+Current Stack: Flutter (mobile) + Supabase (Auth, DB, Storage, Realtime) 
+Previous: React + Vite (web), Express (Node.js) + MongoDB
