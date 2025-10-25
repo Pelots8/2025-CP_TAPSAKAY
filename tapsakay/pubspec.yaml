@@ -1,0 +1,106 @@
+name: tapsakay
+description: "A new Flutter project."
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.8.1 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Map and Location
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  geolocator: ^13.0.1
+  location: ^7.0.0
+  google_maps_flutter: ^2.12.3
+  
+  # Networking and APIs
+  http: ^1.2.0
+  dio: ^5.7.0
+  
+  # UI and Search
+  flutter_typeahead: ^5.2.0
+  
+  # Storage and Preferences  
+  shared_preferences: ^2.2.2
+  flutter_secure_storage: ^9.2.2
+  
+  # Environment and Configuration
+  flutter_dotenv: ^5.1.0
+  
+  # Utilities
+  url_launcher: ^6.3.1
+  intl: ^0.19.0
+  path: ^1.9.0
+  mime: ^1.0.4
+
+  # Backend
+  supabase_flutter: ^2.6.0
+  
+  # UI Libraries
+  flutter_svg: ^2.0.10
+  google_fonts: ^6.2.1
+  
+  # Sharing and Media
+  share_plus: ^10.0.2
+  image_picker: ^1.1.2
+  flutter_image_compress: ^2.0.4
+
+  font_awesome_flutter: ^10.7.0
+  
+  # Date and Time
+  flutter_datetime_picker_plus: ^2.2.0
+  
+  # State Management
+  provider: ^6.1.2
+  
+  # Charts and Analytics
+  fl_chart: ^1.0.0
+  syncfusion_flutter_charts: ^30.2.4
+  
+  # Sensors
+  sensors_plus: ^6.0.1
+  
+  # Connectivity and Network
+  connectivity_plus: ^6.0.5
+  
+  # Caching for better performance
+  cached_network_image: ^3.4.1
+  carousel_slider: ^5.1.1
+
+  # For better social auth UI (optional)
+  flutter_signin_button: ^2.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_native_splash: ^2.4.1
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.png
+    - assets/images/splash.png
+    
+    - .env
+
+# Splash Screen Configuration
+flutter_native_splash:
+  color: "#ffffff"
+  image: assets/images/splash.png
+  android_12:
+    image: assets/images/splash.png
+    color: "#ffffff"
+  web: false
+
+# App Icon Configuration
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/splash.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/images/splash.png"
