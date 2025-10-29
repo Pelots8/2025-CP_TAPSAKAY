@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:tapsakay/admin/admin_buses_page.dart';
 import 'package:tapsakay/admin/admin_drivers_page.dart';
+import 'package:tapsakay/admin/admin_nfc_cards_page.dart';
+import 'package:tapsakay/admin/admin_transactions_page.dart';
+import 'package:tapsakay/admin/admin_trips_page.dart';
+import 'package:tapsakay/admin/admin_users_page.dart';
 import 'package:tapsakay/driver/driver_service.dart';
 import '../user/login_api.dart';
 import 'package:tapsakay/admin/admin_live_map_page.dart';
@@ -96,7 +100,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
-  Widget _buildDashboardContent() {
+ Widget _buildDashboardContent() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -125,12 +129,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
             builder: (context, constraints) {
               final isDesktop = constraints.maxWidth > 800;
               return Wrap(
-                spacing: 24, // Increased spacing
-                runSpacing: 24, // Increased spacing
+                spacing: 24,
+                runSpacing: 24,
                 children: [
                   _StatCard(
                     title: 'Total Buses',
-                    // 🚀 DYNAMIC VALUE
                     value: '$_totalBuses',
                     icon: Icons.directions_bus,
                     color: Colors.blue.shade700,
@@ -138,7 +141,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   _StatCard(
                     title: 'Active Drivers',
-                    // 🚀 DYNAMIC VALUE
                     value: '$_activeDrivers',
                     icon: Icons.person_pin_circle_rounded,
                     color: Colors.green.shade700,
@@ -146,7 +148,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   _StatCard(
                     title: 'Total Passengers',
-                    // 🚀 DYNAMIC VALUE
                     value: _totalPassengers.toString(),
                     icon: Icons.people_alt_rounded,
                     color: Colors.orange.shade700,
@@ -156,7 +157,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
               );
             },
           ),
-          const SizedBox(height: 40), // Increased spacing
+          const SizedBox(height: 40),
 
           // Quick Actions
           Text(
@@ -167,13 +168,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
               color: Colors.grey[800],
             ),
           ),
-          const SizedBox(height: 20), // Increased spacing
+          const SizedBox(height: 20),
           LayoutBuilder(
             builder: (context, constraints) {
               final isDesktop = constraints.maxWidth > 800;
               return Wrap(
-                spacing: 24, // Increased spacing
-                runSpacing: 24, // Increased spacing
+                spacing: 24,
+                runSpacing: 24,
                 children: [
                   _ActionCard(
                     title: 'Manage Buses',
@@ -215,6 +216,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     },
                     width: isDesktop ? (constraints.maxWidth - 48) / 2 : constraints.maxWidth,
                   ),
+                  // 🎴 NEW: NFC Cards Quick Action
+                  _ActionCard(
+                    title: 'Manage NFC Cards',
+                    description: 'Create and manage NFC cards',
+                    icon: Icons.credit_card,
+                    color: Colors.cyan.shade700,
+                    onTap: () {
+                      setState(() => _selectedIndex = 5);
+                    },
+                    width: isDesktop ? (constraints.maxWidth - 48) / 2 : constraints.maxWidth,
+                  ),
                 ],
               );
             },
@@ -224,38 +236,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildPlaceholderPage(String title) {
-    // ... (Your existing placeholder page logic)
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.construction, size: 80, color: Colors.grey[400]),
-          const SizedBox(height: 24),
-          Text(
-            '$title Page',
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Content coming soon...',
-            style: TextStyle(
-              fontSize: 18,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  /**
-   * 🚀 NEW: A separate widget for the User Profile badge.
-   * This makes it reusable and easier to manage the visibility logic.
-   */
   Widget _buildUserProfileBadge(bool showDetails) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -305,14 +286,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 800;
 
-    final List<Widget> pages = [
-      _buildDashboardContent(),
-      const AdminBusesPage(),
-      const AdminDriversPage(),
-      _buildPlaceholderPage('Transactions'),
-      _buildPlaceholderPage('Users'),
-      const AdminLiveMapPage(),
-    ];
+final List<Widget> pages = [
+  _buildDashboardContent(),
+  const AdminBusesPage(),
+  const AdminDriversPage(),
+  const AdminTransactionsPage(),  // ← NEW
+  const AdminUsersPage(),
+  const AdminNFCCardsPage(),
+  const AdminLiveMapPage(),
+  const AdminTripsPage(),  // ← ADD THIS NEW PAGE
+];
 
     // Show loading indicator until user profile and initial data is loaded
     if (_isLoading && (_totalBuses == 0 && _activeDrivers == 0 && _totalPassengers == 0)) {
@@ -347,7 +330,8 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         _buildNavItem(2, Icons.badge, 'Drivers'),
                         _buildNavItem(3, Icons.receipt_long, 'Transactions'),
                         _buildNavItem(4, Icons.people, 'Users'),
-                        _buildNavItem(5, Icons.map, 'Live Map'),
+                        _buildNavItem(5, Icons.credit_card, 'NFC Cards'),
+                        _buildNavItem(6, Icons.map, 'Live Map'),
                       ],
                     ),
                   ),

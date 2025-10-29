@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'core/auth_wrapper.dart';
+import 'user/role_redirection.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

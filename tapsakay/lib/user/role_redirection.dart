@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../user/login_api.dart';
+import 'login_api.dart';
 import '../admin/admin_dashboard.dart';
 import '../driver/driver_page.dart';
 import '../passenger/passenger_page.dart';
-import '../user/login.dart';
+import 'login.dart';
 
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});

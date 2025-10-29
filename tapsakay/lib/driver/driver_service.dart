@@ -131,35 +131,39 @@ class DriverService {
     }
   }
 
-  /// Set driver on duty status
-  static Future<void> setOnDutyStatus({
-    required String driverId,
-    required bool isOnDuty,
-    double? latitude,
-    double? longitude,
-  }) async {
-    try {
-      final Map<String, dynamic> updateData = {
-        'is_on_duty': isOnDuty,
-      };
 
-      if (isOnDuty && latitude != null && longitude != null) {
-        updateData['current_latitude'] = latitude;
-        updateData['current_longitude'] = longitude;
-      } else if (!isOnDuty) {
-        updateData['current_latitude'] = null;
-        updateData['current_longitude'] = null;
-      }
+/// Set driver on duty status
+static Future<void> setOnDutyStatus({
+  required String driverId,
+  required bool isOnDuty,
+  double? latitude,
+  double? longitude,
+  String? currentTripId, // 🚀 ADD THIS PARAMETER
+}) async {
+  try {
+    final Map<String, dynamic> updateData = {
+      'is_on_duty': isOnDuty,
+      'current_trip_id': currentTripId, // 🚀 ADD THIS
+    };
 
-      await _supabase
-          .from('drivers')
-          .update(updateData)
-          .eq('id', driverId);
-    } catch (e) {
-      print('Error setting duty status: $e');
-      throw Exception('Failed to update duty status: ${e.toString()}');
+    if (isOnDuty && latitude != null && longitude != null) {
+      updateData['current_latitude'] = latitude;
+      updateData['current_longitude'] = longitude;
+    } else if (!isOnDuty) {
+      updateData['current_latitude'] = null;
+      updateData['current_longitude'] = null;
+      updateData['current_trip_id'] = null; // 🚀 Clear trip ID when going off duty
     }
+
+    await _supabase
+        .from('drivers')
+        .update(updateData)
+        .eq('id', driverId);
+  } catch (e) {
+    print('Error setting duty status: $e');
+    throw Exception('Failed to update duty status: ${e.toString()}');
   }
+}
 
   /// Update driver location
   static Future<void> updateDriverLocation({

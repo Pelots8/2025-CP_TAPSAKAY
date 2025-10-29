@@ -490,16 +490,15 @@ if (_currentPassengerTrip != null)
             ),
           ),
 
-// Bottom Sheet - Show Current Trip, Nearby Bus, or Active Buses
+          // Bottom Sheet with Active Buses
+// Bottom Sheet - Show either Active Buses or Current Trip
 Positioned(
   bottom: 0,
   left: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
   right: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
   child: _currentPassengerTrip != null
-      ? _buildOnboardSheet() // Passenger is already on a trip
-      : _getNearestBus() != null
-          ? _buildBoardBusSheet(_getNearestBus()!) // Bus is nearby (≤5m)
-          : _buildActiveBusesSheet(), // Show all active buses
+      ? _buildOnboardSheet() // Show onboard UI when passenger has active trip
+      : _buildActiveBusesSheet(), // Show active buses when no trip
 ),
         ],
       ),
@@ -524,31 +523,7 @@ Positioned(
       }
     }
     
-    bool _isNearBus(Map<String, dynamic> driver) {
-  final lat = driver['current_latitude'];
-  final lng = driver['current_longitude'];
-  
-  if (lat == null || lng == null) return false;
-  
-  final distance = Geolocator.distanceBetween(
-    _currentLocation.latitude,
-    _currentLocation.longitude,
-    lat.toDouble(),
-    lng.toDouble(),
-  );
-  
-  // Check if within 5 meters
-  return distance <= 5.0;
-}
-
-Map<String, dynamic>? _getNearestBus() {
-  for (var driver in _activeBuses) {
-    if (_isNearBus(driver)) {
-      return driver;
-    }
-  }
-  return null;
-}
+    
 
 // Build Active Buses Sheet (original bottom sheet)
 Widget _buildActiveBusesSheet() {
@@ -710,206 +685,6 @@ Widget _buildActiveBusesSheet() {
                       },
                     ),
                   ),
-      ],
-    ),
-  );
-}
-
-// Build Board Bus Sheet (when passenger is near a bus)
-Widget _buildBoardBusSheet(Map<String, dynamic> driver) {
-  final bus = driver['buses'];
-  final driverUser = driver['users'];
-  final distance = _calculateDistance(
-    LatLng(
-      driver['current_latitude'].toDouble(),
-      driver['current_longitude'].toDouble(),
-    ),
-  );
-  
-  return Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Colors.blue[700]!, Colors.blue[500]!],
-      ),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.2),
-          blurRadius: 15,
-          offset: const Offset(0, -4),
-        ),
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Pulsing indicator
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: Colors.greenAccent,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.greenAccent.withOpacity(0.5),
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'BUS NEARBY',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Bus Info
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.directions_bus,
-                color: Colors.white,
-                size: 32,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    bus['bus_number'] ?? 'N/A',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    bus['route_name'] ?? 'No route',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 14,
-                    ),
-                  ),
-                  if (driverUser != null)
-                    Text(
-                      'Driver: ${driverUser['full_name']}',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 12,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        
-        // Distance indicator
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.location_on, color: Colors.white.withOpacity(0.9), size: 20),
-              const SizedBox(width: 8),
-              Text(
-                _formatDistance(distance),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                ' away',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Board Button
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton.icon(
-            onPressed: () => _handleTapIn(driver),
-            icon: const Icon(Icons.login, color: Colors.blue),
-            label: const Text(
-              'Board This Bus',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 0,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        // View other buses button
-        TextButton(
-          onPressed: () {
-            setState(() {
-              // Force show all buses by temporarily disabling geofence check
-              // You can implement a flag like _showAllBuses if needed
-            });
-          },
-          child: Text(
-            'View all active buses',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontSize: 14,
-            ),
-          ),
-        ),
       ],
     ),
   );
@@ -1115,153 +890,149 @@ Widget _buildOnboardSheet() {
   );
 }
 
- void _showBusInfo(Map<String, dynamic> driver) {
-  final bus = driver['buses'];
-  if (bus == null) return;
-  
-  final driverUser = driver['users'];
-  final distance = _calculateDistance(
-    LatLng(
-      driver['current_latitude'].toDouble(),
-      driver['current_longitude'].toDouble(),
-    ),
-  );
-  
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      padding: const EdgeInsets.all(24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+  void _showBusInfo(Map<String, dynamic> driver) {
+    final bus = driver['buses'];
+    if (bus == null) return;
+    
+    final driverUser = driver['users'];
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.directions_bus,
+                    color: Colors.blue[700],
+                    size: 32,
+                  ),
+                ),
+                const SizedBox(width: 16),
+        Expanded(
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        bus['bus_number'] ?? 'N/A',
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+        ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      const SizedBox(height: 4), // Add spacing
+      Text(
+        bus['route_name'] ?? 'No route',
+        style: TextStyle(
+          fontSize: 14,
+          color: Colors.grey[600],
+        ),
+      ),
+      if (driverUser != null) ...[
+        const SizedBox(height: 4), // Add spacing
+        Text(
+          'Driver: ${driverUser['full_name']}',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[500],
+          ),
+        ),
+      ],
+      const SizedBox(height: 6), // Add spacing before distance
+      Row(
         children: [
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
+          Icon(Icons.location_on, size: 14, color: Colors.grey[500]),
+          const SizedBox(width: 4),
+          Text(
+            _formatDistance(_calculateDistance(
+              LatLng(
+                driver['current_latitude'].toDouble(),
+                driver['current_longitude'].toDouble(),
+              ),
+            )),
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[500],
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 24),
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.directions_bus,
-                  color: Colors.blue[700],
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      bus['bus_number'] ?? 'N/A',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+          const SizedBox(width: 4),
+          Text(
+            'away',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[400],
+            ),
+          ),
+        ],
+      ),
+    ],
+  ),
+),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: Colors.green[600],
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      bus['route_name'] ?? 'No route',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    if (driverUser != null) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(width: 6),
                       Text(
-                        'Driver: ${driverUser['full_name']}',
+                        'On Duty',
                         style: TextStyle(
+                          color: Colors.green[700],
                           fontSize: 12,
-                          color: Colors.grey[500],
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ],
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on, size: 14, color: Colors.grey[500]),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatDistance(distance),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: distance <= 5.0 ? Colors.green[700] : Colors.grey[500],
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'away',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[400],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.green[50],
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: Colors.green[600],
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'On Duty',
-                      style: TextStyle(
-                        color: Colors.green[700],
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          
-          // Show different button based on distance
-          if (distance <= 5.0) ...[
+              ],
+            ),
+            const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
                 onPressed: () {
                   Navigator.pop(context);
-                  _handleTapIn(driver);
+                  _showOnboardConfirmation(driver);
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue[700],
@@ -1279,39 +1050,77 @@ Widget _buildOnboardSheet() {
                 ),
               ),
             ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.orange[700]),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Get closer to the bus to board (within 5m)',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.orange[900],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ],
-        ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   
 
+ void _showOnboardConfirmation(Map<String, dynamic> driver) {
+  final bus = driver['buses'];
+  if (bus == null) return;
+  
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Board Bus?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Do you wish to board ${bus['bus_number']} (${bus['route_name']})?'),
+          const SizedBox(height: 16),
+          Text(
+            'Select your NFC card:',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // Show user's NFC cards
+          if (_userNFCCards.isEmpty)
+            Text(
+              'No active NFC cards found',
+              style: TextStyle(color: Colors.red, fontSize: 12),
+            )
+          else
+            ..._userNFCCards
+                .where((card) => card['is_active'] == true && card['is_blocked'] != true)
+                .map((card) => RadioListTile<String>(
+                      title: Text('${card['card_number']}'),
+                      subtitle: Text('Balance: ₱${card['balance'].toStringAsFixed(2)}'),
+                      value: card['id'],
+                      groupValue: null, // You'll need to add a selected card state variable
+                      onChanged: (value) {
+                        // Store selected card
+                      },
+                    ))
+                .toList(),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () => _handleTapIn(driver),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue[700],
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+          child: const Text('Confirm', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    ),
+  );
+}
 
 Future<void> _handleTapIn(Map<String, dynamic> driver) async {
   Navigator.pop(context); // Close dialog

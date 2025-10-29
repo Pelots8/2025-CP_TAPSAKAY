@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:tapsakay/driver/driver_service.dart';
 import 'dart:async';
 import '../user/login_api.dart';
+import '../services/trip_service.dart';
 
 class DriverDashboard extends StatefulWidget {
   const DriverDashboard({super.key});
@@ -24,6 +26,9 @@ class _DriverDashboardState extends State<DriverDashboard> {
   LatLng _currentLocation = const LatLng(6.9214, 122.0790);
   double _currentZoom = 15.0;
   StreamSubscription<Position>? _locationSubscription;
+  Map<String, dynamic>? _currentTrip;
+  RealtimeChannel? _tripChannel;
+  
 
   @override
   void initState() {
@@ -34,84 +39,107 @@ class _DriverDashboardState extends State<DriverDashboard> {
   @override
   void dispose() {
     _locationSubscription?.cancel();
+    _tripChannel?.unsubscribe();
     super.dispose();
+    
   }
 
-  Future<void> _initializeDriver() async {
-    try {
-      // Get user profile
-      final userProfile = await LoginApi.getUserProfile();
-      final userId = userProfile?['id'];
+ Future<void> _initializeDriver() async {
+  try {
+    // Get user profile
+    final userProfile = await LoginApi.getUserProfile();
+    final userId = userProfile?['id'];
 
-      if (userId == null) {
-        throw Exception('User ID not found');
-      }
+    if (userId == null) {
+      throw Exception('User ID not found');
+    }
 
-      // Get driver profile
-      final driverProfile = await DriverService.getDriverProfile(userId);
+    // Get driver profile
+    final driverProfile = await DriverService.getDriverProfile(userId);
 
-      if (driverProfile == null) {
-        // Driver record doesn't exist - show error message
-        setState(() => _isLoading = false);
-        if (mounted) {
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: const Text('Driver Record Not Found'),
-              content: const Text(
-                'Your driver account has not been set up yet. Please contact the administrator to create your driver profile with your license information.',
-              ),
-              actions: [
-                ElevatedButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await LoginApi.logout();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[700],
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text(
-                    'Logout',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-        return;
-      }
-
-      setState(() {
-        _userName = userProfile?['full_name'] ?? 'Driver';
-        _driverId = driverProfile['id'];
-        _assignedBus = driverProfile['buses'];
-        _isOnDuty = driverProfile['is_on_duty'] ?? false;
-        _isLoading = false;
-      });
-
-      // Get current location
-      _getCurrentLocation();
-      _startLocationTracking();
-    } catch (e) {
+    if (driverProfile == null) {
+      // Driver record doesn't exist - show error message
       setState(() => _isLoading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading driver data: ${e.toString()}'),
-            backgroundColor: Colors.red,
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text('Driver Record Not Found'),
+            content: const Text(
+              'Your driver account has not been set up yet. Please contact the administrator to create your driver profile with your license information.',
+            ),
+            actions: [
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await LoginApi.logout();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[700],
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'Logout',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
           ),
         );
       }
+      return;
+    }
+
+    // 🚀 FIX: Load current trip BEFORE setting state
+    final isOnDuty = driverProfile['is_on_duty'] ?? false;
+    Map<String, dynamic>? currentTrip;
+    
+    if (isOnDuty) {
+      currentTrip = await TripService.getCurrentTrip(driverProfile['id']);
+      
+      // 🚀 If driver is marked on duty but has no active trip, reset duty status
+      if (currentTrip == null) {
+        print('Driver marked on duty but no active trip found. Resetting...');
+        await DriverService.setOnDutyStatus(
+          driverId: driverProfile['id'],
+          isOnDuty: false,
+          currentTripId: null,
+        );
+        // Update local variable
+        driverProfile['is_on_duty'] = false;
+      }
+    }
+
+    setState(() {
+      _userName = userProfile?['full_name'] ?? 'Driver';
+      _driverId = driverProfile['id'];
+      _assignedBus = driverProfile['buses'];
+      _isOnDuty = driverProfile['is_on_duty'] ?? false;
+      _currentTrip = currentTrip; // Set the loaded trip
+      _isLoading = false;
+    });
+
+    // Get current location
+    _getCurrentLocation();
+    _startLocationTracking();
+  } catch (e) {
+    setState(() => _isLoading = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading driver data: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
+}
 
   Future<void> _getCurrentLocation() async {
     final position = await DriverService.getCurrentPosition();
@@ -152,95 +180,157 @@ class _DriverDashboardState extends State<DriverDashboard> {
     _locationSubscription?.cancel();
   }
 
-  Future<void> _toggleDutyStatus() async {
-    if (_assignedBus == null) {
+void _subscribeToCurrentTrip() {
+  if (_currentTrip == null) return;
+  
+  _tripChannel?.unsubscribe();
+  
+  _tripChannel = Supabase.instance.client
+    .channel('trip-${_currentTrip!['id']}')
+    .onPostgresChanges(
+      event: PostgresChangeEvent.update,
+      schema: 'public',
+      table: 'trips',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.eq,
+        column: 'id',
+        value: _currentTrip!['id'],
+      ),
+      callback: (payload) async {
+        if (mounted && _currentTrip != null) {
+          // Reload trip details
+          final updatedTrip = await TripService.getTripDetails(_currentTrip!['id']);
+          if (updatedTrip != null && mounted) {
+            setState(() {
+              _currentTrip = updatedTrip;
+            });
+          }
+        }
+      },
+    )
+    .subscribe();
+}
+
+Future<void> _toggleDutyStatus() async {
+  if (_assignedBus == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('No bus assigned. Please contact your administrator.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return;
+  }
+
+  setState(() => _isTogglingDuty = true);
+
+  final newStatus = !_isOnDuty;
+
+  try {
+    if (newStatus) {
+      // Show getting location message
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No bus assigned. Please contact your administrator.'),
-          backgroundColor: Colors.orange,
+          content: Text('Getting your location...'),
+          duration: Duration(seconds: 2),
         ),
       );
-      return;
-    }
 
-    setState(() => _isTogglingDuty = true);
-
-    final newStatus = !_isOnDuty;
-
-    try {
-      if (newStatus) {
-        // Show getting location message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Getting your location...'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-
-        // Going on duty - get current location
-        final position = await DriverService.getCurrentPosition();
-        if (position == null) {
-          throw Exception('Could not get your location. Please enable location services.');
-        }
-
-        await DriverService.setOnDutyStatus(
-          driverId: _driverId!,
-          isOnDuty: true,
-          latitude: position.latitude,
-          longitude: position.longitude,
-        );
-
-        setState(() {
-          _isOnDuty = true;
-          _currentLocation = LatLng(position.latitude, position.longitude);
-          _isTogglingDuty = false;
-        });
-
-        _startLocationTracking();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('You are now on duty. GPS tracking started.'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        // Going off duty
-        await DriverService.setOnDutyStatus(
-          driverId: _driverId!,
-          isOnDuty: false,
-        );
-
-        _stopLocationTracking();
-
-        setState(() {
-          _isOnDuty = false;
-          _isTogglingDuty = false;
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('You are now off duty'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
+      // Going on duty - get current location
+      final position = await DriverService.getCurrentPosition();
+      if (position == null) {
+        throw Exception('Could not get your location. Please enable location services.');
       }
-    } catch (e) {
-      setState(() => _isTogglingDuty = false);
+
+      // 🚀 STEP 1: Start a trip FIRST
+      final trip = await TripService.startTrip(
+        busId: _assignedBus!['id'],
+        driverId: _driverId!,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        locationName: 'Start Location',
+      );
+
+      // 🚀 STEP 2: THEN set on duty status with trip ID
+      await DriverService.setOnDutyStatus(
+        driverId: _driverId!,
+        isOnDuty: true,
+        latitude: position.latitude,
+        longitude: position.longitude,
+        currentTripId: trip['id'], // Pass the trip ID
+      );
+
+      setState(() {
+        _isOnDuty = true;
+        _currentTrip = trip;
+        _currentLocation = LatLng(position.latitude, position.longitude);
+        _isTogglingDuty = false;
+      });
+
+      _startLocationTracking();
+      _subscribeToCurrentTrip();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text('You are now on duty. Trip started!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } else {
+      // Going off duty
+      
+      // 🚀 STEP 1: End the current trip if exists
+      if (_currentTrip != null) {
+        final position = await DriverService.getCurrentPosition();
+        if (position != null) {
+          await TripService.endTrip(
+            tripId: _currentTrip!['id'],
+            latitude: position.latitude,
+            longitude: position.longitude,
+            locationName: 'End Location',
+          );
+        }
+      }
+
+      // 🚀 STEP 2: THEN clear on-duty status and trip ID
+      await DriverService.setOnDutyStatus(
+        driverId: _driverId!,
+        isOnDuty: false,
+        currentTripId: null, // Clear the trip ID
+      );
+
+      _stopLocationTracking();
+
+      setState(() {
+        _isOnDuty = false;
+        _currentTrip = null;
+        _isTogglingDuty = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You are now off duty. Trip ended!'),
+            backgroundColor: Colors.orange,
           ),
         );
       }
     }
+  } catch (e) {
+    setState(() => _isTogglingDuty = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
+}
+
 
   Future<void> _handleLogout() async {
     if (_isOnDuty) {
@@ -443,50 +533,69 @@ class _DriverDashboardState extends State<DriverDashboard> {
                         ),
                       ],
                     ),
-                    if (_assignedBus != null) ...[
-                      const SizedBox(height: 12),
-                      const Divider(),
-                      const SizedBox(height: 12),
-                      // Bus info - READ ONLY, no interaction
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.blue[700],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.directions_bus,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  _assignedBus!['bus_number'] ?? 'N/A',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                Text(
-                                  _assignedBus!['route_name'] ?? 'No route',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ] else ...[
+if (_currentTrip != null) ...[
+  const SizedBox(height: 12),
+  Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: Colors.green[50],
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Colors.green[200]!),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceAround,
+      children: [
+        Column(
+          children: [
+            Icon(Icons.people, color: Colors.green[700], size: 20),
+            const SizedBox(height: 4),
+            Text(
+              '${_currentTrip!['total_passengers'] ?? 0}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.green[700],
+              ),
+            ),
+            Text(
+              'Passengers',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.green[600],
+              ),
+            ),
+          ],
+        ),
+        Container(
+          width: 1,
+          height: 40,
+          color: Colors.green[200],
+        ),
+        Column(
+          children: [
+            Icon(Icons.attach_money, color: Colors.green[700], size: 20),
+            const SizedBox(height: 4),
+            Text(
+              '₱${(_currentTrip!['total_fare_collected'] ?? 0.0).toStringAsFixed(2)}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+                color: Colors.green[700],
+              ),
+            ),
+            Text(
+              'Collected',
+              style: TextStyle(
+                fontSize: 10,
+                color: Colors.green[600],
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  ),
+] else ...[
                       const SizedBox(height: 12),
                       const Divider(),
                       const SizedBox(height: 12),
