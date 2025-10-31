@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:tapsakay/passenger/passenger_tap_service.dart';
 import 'package:tapsakay/passenger/profile_page.dart';
+import 'package:tapsakay/passenger/trip_history_page.dart';
 import '../user/login_api.dart';
 import '../services/bus_service.dart';
 import '../services/user_service.dart';
@@ -1416,15 +1417,18 @@ Future<void> _handleTapIn(Map<String, dynamic> driver) async {
                 _showNFCCardsSheet();
               },
             ),
-            ListTile(
-              leading: Icon(Icons.history, color: Colors.blue[700]),
-              title: const Text('Trip History'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Navigate to trip history page
-              },
-            ),
+ListTile(
+  leading: Icon(Icons.history, color: Colors.blue[700]),
+  title: const Text('Trip History'),
+  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+  onTap: () {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const TripHistoryPage()),
+    );
+  },
+),
           ListTile(
             leading: Icon(Icons.person, color: Colors.blue[700]),
             title: const Text('Profile'),

@@ -3,7 +3,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:tapsakay/driver/driver_profile_page.dart';
 import 'package:tapsakay/driver/driver_service.dart';
+import 'package:tapsakay/driver/driver_trip_history_page.dart';
 import 'dart:async';
 import '../user/login_api.dart';
 import '../services/trip_service.dart';
@@ -766,24 +768,30 @@ if (_currentTrip != null) ...[
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: Icon(Icons.history, color: Colors.blue[700]),
-              title: const Text('Trip History'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Navigate to trip history page
-              },
-            ),
-            ListTile(
-              leading: Icon(Icons.person, color: Colors.blue[700]),
-              title: const Text('Profile'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                Navigator.pop(context);
-                // TODO: Navigate to profile page
-              },
-            ),
+          ListTile(
+            leading: Icon(Icons.history, color: Colors.blue[700]),
+            title: const Text('Trip History'),
+            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const DriverTripHistoryPage()),
+              );
+            },
+          ),
+ListTile(
+  leading: Icon(Icons.person, color: Colors.blue[700]),
+  title: const Text('Profile'),
+  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+  onTap: () {
+    Navigator.pop(context);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const DriverProfilePage()),
+    );
+  },
+),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),

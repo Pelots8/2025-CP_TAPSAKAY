@@ -81,212 +81,228 @@ class _AdminNFCCardsPageState extends State<AdminNFCCardsPage> {
     });
   }
 
-  Future<void> _showCreateCardDialog() async {
-    final cardNumberController = TextEditingController();
-    final initialBalanceController = TextEditingController(text: '0');
-    final formKey = GlobalKey<FormState>();
-    
-    String selectedCardType = 'reloadable';
-    String selectedDiscountType = 'none';
-    String? selectedUserId;
-    List<Map<String, dynamic>> users = [];
+ Future<void> _showCreateCardDialog() async {
+  final cardNumberController = TextEditingController();
+  final initialBalanceController = TextEditingController(text: '0');
+  final formKey = GlobalKey<FormState>();
+  
+  String selectedCardType = 'reloadable';
+  String selectedDiscountType = 'none';
+  String? selectedUserId;
+  List<Map<String, dynamic>> users = [];
 
-    // Load users
-    try {
-      users = await UserService.getUsers(roleFilter: 'passenger');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading users: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
+  // Load users
+  try {
+    users = await UserService.getUsers(roleFilter: 'passenger');
+  } catch (e) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading users: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
+    return;
+  }
 
-    if (!mounted) return;
+  if (!mounted) return;
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.credit_card, color: Colors.blue),
-              SizedBox(width: 12),
-              Text('Create NFC Card'),
+  await showDialog(
+    context: context,
+    builder: (context) => LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 600;
+        
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            contentPadding: EdgeInsets.all(isMobile ? 20 : 24),
+            insetPadding: EdgeInsets.symmetric(
+              horizontal: isMobile ? 16 : 40,
+              vertical: 24,
+            ),
+            title: const Row(
+              children: [
+                Icon(Icons.credit_card, color: Colors.blue),
+                SizedBox(width: 12),
+                Text('Create NFC Card'),
+              ],
+            ),
+            content: SizedBox(
+              width: isMobile 
+                ? constraints.maxWidth * 0.9 
+                : 500,
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Card Number
+                      TextFormField(
+                        controller: cardNumberController,
+                        decoration: InputDecoration(
+                          labelText: 'Card Number *',
+                          hintText: 'e.g., CARD-001',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.numbers),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter card number';
+                          }
+                          if (value.length < 4) {
+                            return 'Card number must be at least 4 characters';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Card Type
+                      DropdownButtonFormField<String>(
+                        value: selectedCardType,
+                        decoration: InputDecoration(
+                          labelText: 'Card Type *',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.category),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'reloadable',
+                            child: Text('Reloadable'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'single_use',
+                            child: Text('Single Use'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedCardType = value!;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Owner Selection
+                      DropdownButtonFormField<String>(
+                        value: selectedUserId,
+                        decoration: InputDecoration(
+                          labelText: 'Assign to User (Optional)',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.person),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('-- Unassigned --'),
+                          ),
+                          ...users.map((user) => DropdownMenuItem(
+                            value: user['id'],
+                            child: Text(user['full_name'] ?? user['email']),
+                          )),
+                        ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedUserId = value;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Initial Balance
+                      TextFormField(
+                        controller: initialBalanceController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+                        ],
+                        decoration: InputDecoration(
+                          labelText: 'Initial Balance (₱)',
+                          hintText: '0.00',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.attach_money),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Please enter initial balance';
+                          }
+                          final amount = double.tryParse(value);
+                          if (amount == null || amount < 0) {
+                            return 'Please enter a valid amount';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // Discount Type
+                      DropdownButtonFormField<String>(
+                        value: selectedDiscountType,
+                        decoration: InputDecoration(
+                          labelText: 'Discount Type',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          prefixIcon: const Icon(Icons.discount),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'none', child: Text('None')),
+                          DropdownMenuItem(value: 'student', child: Text('Student')),
+                          DropdownMenuItem(value: 'senior', child: Text('Senior Citizen')),
+                          DropdownMenuItem(value: 'pwd', child: Text('PWD')),
+                        ],
+                        onChanged: (value) {
+                          setDialogState(() {
+                            selectedDiscountType = value!;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  if (formKey.currentState!.validate()) {
+                    Navigator.pop(context);
+                    await _createCard(
+                      cardNumber: cardNumberController.text,
+                      cardType: selectedCardType,
+                      ownerId: selectedUserId,
+                      initialBalance: double.parse(initialBalanceController.text),
+                      discountType: selectedDiscountType,
+                    );
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Create Card'),
+              ),
             ],
           ),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Card Number
-                  TextFormField(
-                    controller: cardNumberController,
-                    decoration: InputDecoration(
-                      labelText: 'Card Number *',
-                      hintText: 'e.g., CARD-001',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      prefixIcon: const Icon(Icons.numbers),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter card number';
-                      }
-                      if (value.length < 4) {
-                        return 'Card number must be at least 4 characters';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Card Type
-                  DropdownButtonFormField<String>(
-                    value: selectedCardType,
-                    decoration: InputDecoration(
-                      labelText: 'Card Type *',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      prefixIcon: const Icon(Icons.category),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'reloadable',
-                        child: Text('Reloadable'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'single_use',
-                        child: Text('Single Use'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      setDialogState(() {
-                        selectedCardType = value!;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Owner Selection
-                  DropdownButtonFormField<String>(
-                    value: selectedUserId,
-                    decoration: InputDecoration(
-                      labelText: 'Assign to User (Optional)',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      prefixIcon: const Icon(Icons.person),
-                    ),
-                    items: [
-                      const DropdownMenuItem(
-                        value: null,
-                        child: Text('-- Unassigned --'),
-                      ),
-                      ...users.map((user) => DropdownMenuItem(
-                        value: user['id'],
-                        child: Text(user['full_name'] ?? user['email']),
-                      )),
-                    ],
-                    onChanged: (value) {
-                      setDialogState(() {
-                        selectedUserId = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Initial Balance
-                  TextFormField(
-                    controller: initialBalanceController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
-                    ],
-                    decoration: InputDecoration(
-                      labelText: 'Initial Balance (₱)',
-                      hintText: '0.00',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      prefixIcon: const Icon(Icons.attach_money),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please enter initial balance';
-                      }
-                      final amount = double.tryParse(value);
-                      if (amount == null || amount < 0) {
-                        return 'Please enter a valid amount';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Discount Type
-                  DropdownButtonFormField<String>(
-                    value: selectedDiscountType,
-                    decoration: InputDecoration(
-                      labelText: 'Discount Type',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      prefixIcon: const Icon(Icons.discount),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'none', child: Text('None')),
-                      DropdownMenuItem(value: 'student', child: Text('Student')),
-                      DropdownMenuItem(value: 'senior', child: Text('Senior Citizen')),
-                      DropdownMenuItem(value: 'pwd', child: Text('PWD')),
-                    ],
-                    onChanged: (value) {
-                      setDialogState(() {
-                        selectedDiscountType = value!;
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (formKey.currentState!.validate()) {
-                  Navigator.pop(context);
-                  await _createCard(
-                    cardNumber: cardNumberController.text,
-                    cardType: selectedCardType,
-                    ownerId: selectedUserId,
-                    initialBalance: double.parse(initialBalanceController.text),
-                    discountType: selectedDiscountType,
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Create Card'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+        );
+      },
+    ),
+  );
+}
 
   Future<void> _createCard({
     required String cardNumber,
@@ -533,10 +549,138 @@ class _AdminNFCCardsPageState extends State<AdminNFCCardsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FA),
-      body: Column(
-        children: [
-          // Header
-          Container(
+body: Column(
+  children: [
+    // Header
+    LayoutBuilder(
+      builder: (context, constraints) {
+        final isMobile = constraints.maxWidth < 600;
+        
+        if (isMobile) {
+          // Mobile Header
+          return Container(
+            padding: const EdgeInsets.all(16),
+            color: Colors.white,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'NFC Cards',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: _showCreateCardDialog,
+                          tooltip: 'Create Card',
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.refresh),
+                          onPressed: _loadCards,
+                          tooltip: 'Refresh',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  onChanged: _handleSearch,
+                  decoration: InputDecoration(
+                    hintText: 'Search...',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButton<String>(
+                          value: _selectedTypeFilter,
+                          isExpanded: true,
+                          underline: const SizedBox(),
+                          items: const [
+                            DropdownMenuItem(value: 'all', child: Text('All Types')),
+                            DropdownMenuItem(value: 'reloadable', child: Text('Reloadable')),
+                            DropdownMenuItem(value: 'single_use', child: Text('Single Use')),
+                          ],
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedTypeFilter = value!;
+                              _handleFilterChange();
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade50,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: DropdownButton<String>(
+                          value: _selectedStatusFilter,
+                          isExpanded: true,
+                          underline: const SizedBox(),
+                          items: const [
+                            DropdownMenuItem(value: 'all', child: Text('All Status')),
+                            DropdownMenuItem(value: 'active', child: Text('Active')),
+                            DropdownMenuItem(value: 'inactive', child: Text('Inactive')),
+                          ],
+                          onChanged: (value) {
+                            setState(() {
+                              _selectedStatusFilter = value!;
+                              _handleFilterChange();
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        } else {
+          // Desktop Header (original)
+          return Container(
             padding: const EdgeInsets.all(24),
             color: Colors.white,
             child: Column(
@@ -651,52 +795,89 @@ class _AdminNFCCardsPageState extends State<AdminNFCCardsPage> {
                 ),
               ],
             ),
-          ),
+          );
+        }
+      },
+    ),
 
           // Card List
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredCards.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.credit_card_off,
-                                size: 64, color: Colors.grey.shade400),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No cards found',
-                              style: TextStyle(
-                                fontSize: 18,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : GridView.builder(
-                        padding: const EdgeInsets.all(24),
-                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 400,
-                          childAspectRatio: 1.6,
-                          crossAxisSpacing: 20,
-                          mainAxisSpacing: 20,
-                        ),
-                        itemCount: _filteredCards.length,
-                        itemBuilder: (context, index) {
-                          final card = _filteredCards[index];
-                          return _NFCCardWidget(
-                            card: card,
-                            onTap: () => _showCardDetails(card),
-                            onToggleStatus: () => _toggleCardStatus(card),
-                            onDelete: () => _deleteCard(card),
-                            getCardTypeColor: _getCardTypeColor,
-                            getDiscountColor: _getDiscountColor,
-                          );
-                        },
-                      ),
-          ),
+        // Card List
+Expanded(
+  child: _isLoading
+      ? const Center(child: CircularProgressIndicator())
+      : _filteredCards.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.credit_card_off,
+                      size: 64, color: Colors.grey.shade400),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No cards found',
+                    style: TextStyle(
+                      fontSize: 18,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final isMobile = constraints.maxWidth < 600;
+                
+               if (isMobile) {
+  // Mobile: Single column list with flexible height cards
+  return ListView.builder(
+    padding: const EdgeInsets.all(16),
+    itemCount: _filteredCards.length,
+    itemBuilder: (context, index) {
+      final card = _filteredCards[index];
+      return Container(
+        constraints: const BoxConstraints(
+          minHeight: 200,
+          maxHeight: 220,
+        ),
+        margin: const EdgeInsets.only(bottom: 16),
+        child: _NFCCardWidget(
+          card: card,
+          onTap: () => _showCardDetails(card),
+          onToggleStatus: () => _toggleCardStatus(card),
+          onDelete: () => _deleteCard(card),
+          getCardTypeColor: _getCardTypeColor,
+          getDiscountColor: _getDiscountColor,
+        ),
+      );
+    },
+  );
+} else {
+                  // Desktop: Grid layout
+                  return GridView.builder(
+                    padding: const EdgeInsets.all(24),
+                    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 400,
+                      childAspectRatio: 1.6,
+                      crossAxisSpacing: 20,
+                      mainAxisSpacing: 20,
+                    ),
+                    itemCount: _filteredCards.length,
+                    itemBuilder: (context, index) {
+                      final card = _filteredCards[index];
+                      return _NFCCardWidget(
+                        card: card,
+                        onTap: () => _showCardDetails(card),
+                        onToggleStatus: () => _toggleCardStatus(card),
+                        onDelete: () => _deleteCard(card),
+                        getCardTypeColor: _getCardTypeColor,
+                        getDiscountColor: _getDiscountColor,
+                      );
+                    },
+                  );
+                }
+              },
+            ),
+),
         ],
       ),
     );

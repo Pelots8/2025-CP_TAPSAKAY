@@ -148,55 +148,95 @@ class _AdminTransactionsPageState extends State<AdminTransactionsPage> {
         return Icons.receipt;
     }
   }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      body: Column(
-        children: [
-          // Header with Statistics
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Transactions',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B),
+@override
+Widget build(BuildContext context) {
+  final isMobile = MediaQuery.of(context).size.width < 600;
+  
+  return Scaffold(
+    backgroundColor: const Color(0xFFF5F7FA),
+    body: Column(
+      children: [
+        // Compact Header
+        Container(
+          padding: EdgeInsets.all(isMobile ? 12 : 24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Transactions',
+                    style: TextStyle(
+                      fontSize: isMobile ? 24 : 28,
+                      fontWeight: FontWeight.bold,
+                      color: const Color(0xFF1E293B),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () {
+                      _loadTransactions();
+                      _loadStatistics();
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              SizedBox(height: isMobile ? 8 : 16),
+              
+              // Compact Statistics - Single Row on Mobile
+              if (isMobile)
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _CompactStatCard(
+                        title: 'Revenue',
+                        value: _formatCurrency(_statistics['total_revenue']),
+                        icon: Icons.attach_money,
+                        color: Colors.green.shade700,
                       ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: () {
-                        _loadTransactions();
-                        _loadStatistics();
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                
-                // Statistics Cards
+                      const SizedBox(width: 8),
+                      _CompactStatCard(
+                        title: 'Reloads',
+                        value: _formatCurrency(_statistics['total_reloads']),
+                        icon: Icons.add_card,
+                        color: Colors.blue.shade700,
+                      ),
+                      const SizedBox(width: 8),
+                      _CompactStatCard(
+                        title: 'Success',
+                        value: '${_statistics['successful_transactions']}',
+                        icon: Icons.check_circle,
+                        color: Colors.green.shade600,
+                      ),
+                      const SizedBox(width: 8),
+                      _CompactStatCard(
+                        title: 'Failed',
+                        value: '${_statistics['failed_transactions']}',
+                        icon: Icons.error,
+                        color: Colors.red.shade600,
+                      ),
+                    ],
+                  ),
+                )
+              else
+                // Desktop Statistics Grid
                 LayoutBuilder(
                   builder: (context, constraints) {
-                    final isDesktop = constraints.maxWidth > 800;
+                    final cardWidth = (constraints.maxWidth - 48) / 4;
                     return Wrap(
                       spacing: 16,
                       runSpacing: 16,
@@ -206,101 +246,189 @@ class _AdminTransactionsPageState extends State<AdminTransactionsPage> {
                           value: _formatCurrency(_statistics['total_revenue']),
                           icon: Icons.attach_money,
                           color: Colors.green.shade700,
-                          width: isDesktop ? (constraints.maxWidth - 48) / 4 : (constraints.maxWidth - 16) / 2,
+                          width: cardWidth,
                         ),
                         _StatCard(
                           title: 'Total Reloads',
                           value: _formatCurrency(_statistics['total_reloads']),
                           icon: Icons.add_card,
                           color: Colors.blue.shade700,
-                          width: isDesktop ? (constraints.maxWidth - 48) / 4 : (constraints.maxWidth - 16) / 2,
+                          width: cardWidth,
                         ),
                         _StatCard(
                           title: 'Successful',
                           value: '${_statistics['successful_transactions']}',
                           icon: Icons.check_circle,
                           color: Colors.green.shade600,
-                          width: isDesktop ? (constraints.maxWidth - 48) / 4 : (constraints.maxWidth - 16) / 2,
+                          width: cardWidth,
                         ),
                         _StatCard(
                           title: 'Failed',
                           value: '${_statistics['failed_transactions']}',
                           icon: Icons.error,
                           color: Colors.red.shade600,
-                          width: isDesktop ? (constraints.maxWidth - 48) / 4 : (constraints.maxWidth - 16) / 2,
+                          width: cardWidth,
                         ),
                       ],
                     );
                   },
                 ),
-                const SizedBox(height: 16),
-                
-                // Filter Chips
-                Wrap(
-                  spacing: 8,
+              SizedBox(height: isMobile ? 8 : 16),
+              
+              // Filter Chips - Compact
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
                   children: [
-                    FilterChip(
-                      label: const Text('All'),
+                    _CompactFilterChip(
+                      label: 'All',
                       selected: _selectedType == null,
                       onSelected: (selected) => _filterByType(null),
                     ),
-                    FilterChip(
-                      label: const Text('Tap In'),
+                    const SizedBox(width: 6),
+                    _CompactFilterChip(
+                      label: 'Tap In',
                       selected: _selectedType == 'tap_in',
                       onSelected: (selected) => _filterByType('tap_in'),
                     ),
-                    FilterChip(
-                      label: const Text('Tap Out'),
+                    const SizedBox(width: 6),
+                    _CompactFilterChip(
+                      label: 'Tap Out',
                       selected: _selectedType == 'tap_out',
                       onSelected: (selected) => _filterByType('tap_out'),
                     ),
-                    FilterChip(
-                      label: const Text('Reload'),
+                    const SizedBox(width: 6),
+                    _CompactFilterChip(
+                      label: 'Reload',
                       selected: _selectedType == 'reload',
                       onSelected: (selected) => _filterByType('reload'),
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+        ),
 
-          // Transactions List
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _transactions.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No transactions found',
-                              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                            ),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(24),
-                        itemCount: _transactions.length,
-                        itemBuilder: (context, index) {
-                          final transaction = _transactions[index];
-                          return _TransactionCard(
-                            transaction: transaction,
-                            formatCurrency: _formatCurrency,
-                            formatDateTime: _formatDateTime,
-                            getStatusColor: _getStatusColor,
-                            getTypeColor: _getTypeColor,
-                            getTypeIcon: _getTypeIcon,
-                          );
-                        },
+        // Transactions List
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _transactions.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.receipt_long, size: 64, color: Colors.grey[400]),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No transactions found',
+                            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                          ),
+                        ],
                       ),
+                    )
+                  : ListView.builder(
+                      padding: EdgeInsets.all(isMobile ? 12 : 24),
+                      itemCount: _transactions.length,
+                      itemBuilder: (context, index) {
+                        final transaction = _transactions[index];
+                        return _TransactionCard(
+                          transaction: transaction,
+                          isMobile: isMobile,
+                          formatCurrency: _formatCurrency,
+                          formatDateTime: _formatDateTime,
+                          getStatusColor: _getStatusColor,
+                          getTypeColor: _getTypeColor,
+                          getTypeIcon: _getTypeIcon,
+                        );
+                      },
+                    ),
+        ),
+      ],
+    ),
+  );
+}
+}
+
+// Compact stat card for mobile horizontal scroll
+class _CompactStatCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  const _CompactStatCard({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: color, size: 18),
+          const SizedBox(width: 6),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
           ),
         ],
       ),
+    );
+  }
+}
+
+// Compact filter chip
+class _CompactFilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Function(bool) onSelected;
+
+  const _CompactFilterChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: onSelected,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+      labelStyle: const TextStyle(fontSize: 12),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
     );
   }
 }
@@ -372,6 +500,7 @@ class _StatCard extends StatelessWidget {
 
 class _TransactionCard extends StatelessWidget {
   final Map<String, dynamic> transaction;
+  final bool isMobile;
   final String Function(dynamic) formatCurrency;
   final String Function(String?) formatDateTime;
   final Color Function(String?) getStatusColor;
@@ -380,6 +509,7 @@ class _TransactionCard extends StatelessWidget {
 
   const _TransactionCard({
     required this.transaction,
+    this.isMobile = false,
     required this.formatCurrency,
     required this.formatDateTime,
     required this.getStatusColor,
@@ -397,8 +527,8 @@ class _TransactionCard extends StatelessWidget {
     final amount = transaction['amount'];
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      margin: EdgeInsets.only(bottom: isMobile ? 10 : 16),
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -413,7 +543,9 @@ class _TransactionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
@@ -424,84 +556,158 @@ class _TransactionCard extends StatelessWidget {
                 child: Icon(
                   getTypeIcon(type),
                   color: getTypeColor(type),
-                  size: 20,
+                  size: 18,
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        Text(
-                          type?.toUpperCase().replaceAll('_', ' ') ?? 'N/A',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                        Flexible(
+                          child: Text(
+                            type?.toUpperCase().replaceAll('_', ' ') ?? 'N/A',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: isMobile ? 13 : 16,
+                            ),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
+                            horizontal: 6,
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
                             color: getStatusColor(status).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
+                            borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
                             status?.toUpperCase() ?? 'N/A',
                             style: TextStyle(
                               color: getStatusColor(status),
-                              fontSize: 10,
+                              fontSize: 9,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       formatDateTime(transaction['created_at']),
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: isMobile ? 10 : 12,
                         color: Colors.grey[600],
                       ),
                     ),
                   ],
                 ),
               ),
-              Text(
-                formatCurrency(amount),
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: type == 'reload' ? Colors.green[700] : Colors.blue[700],
+              if (!isMobile) ...[
+                const SizedBox(width: 12),
+                Text(
+                  formatCurrency(amount),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: type == 'reload' ? Colors.green[700] : Colors.blue[700],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
-          const SizedBox(height: 12),
-          const Divider(),
-          const SizedBox(height: 12),
           
-          // Transaction Details
+          // Amount on mobile
+          if (isMobile) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: (type == 'reload' ? Colors.green : Colors.blue).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Amount: ',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    formatCurrency(amount),
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: type == 'reload' ? Colors.green[700] : Colors.blue[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          
+          SizedBox(height: isMobile ? 8 : 12),
+          Divider(height: 1, color: Colors.grey.shade200),
+          SizedBox(height: isMobile ? 8 : 12),
+          
+          // Essential Transaction Details Only
           _buildDetailRow('Passenger', passenger?['full_name'] ?? 'N/A'),
-          _buildDetailRow('Email', passenger?['email'] ?? 'N/A'),
-          _buildDetailRow('Card Number', nfcCard?['card_number'] ?? 'N/A'),
-          if (bus != null) ...[
-            _buildDetailRow('Bus', '${bus['bus_number']} - ${bus['plate_number']}'),
+          if (isMobile) ...[
+            _buildDetailRow('Card', nfcCard?['card_number'] ?? 'N/A'),
+            if (bus != null)
+              _buildDetailRow('Bus', '${bus['bus_number']}'),
+          ] else ...[
+            _buildDetailRow('Email', passenger?['email'] ?? 'N/A'),
+            _buildDetailRow('Card Number', nfcCard?['card_number'] ?? 'N/A'),
+            if (bus != null)
+              _buildDetailRow('Bus', '${bus['bus_number']} - ${bus['plate_number']}'),
           ],
-          if (transaction['discount_type'] != null && transaction['discount_type'] != 'none') ...[
-            _buildDetailRow('Discount', transaction['discount_type']?.toUpperCase()),
-            _buildDetailRow('Discount Applied', formatCurrency(transaction['discount_applied'])),
-          ],
-          _buildDetailRow('Balance Before', formatCurrency(transaction['balance_before'])),
-          _buildDetailRow('Balance After', formatCurrency(transaction['balance_after'])),
-          if (transaction['location_name'] != null) ...[
-            _buildDetailRow('Location', transaction['location_name']),
+          
+          // Show more details in expandable section on mobile
+          if (isMobile)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: Text(
+                'More Details',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.blue[700],
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              children: [
+                if (passenger?['email'] != null)
+                  _buildDetailRow('Email', passenger['email']),
+                if (bus != null && bus['plate_number'] != null)
+                  _buildDetailRow('Plate', bus['plate_number']),
+                if (transaction['discount_type'] != null && transaction['discount_type'] != 'none') ...[
+                  _buildDetailRow('Discount', transaction['discount_type']?.toUpperCase()),
+                  _buildDetailRow('Discount Applied', formatCurrency(transaction['discount_applied'])),
+                ],
+                _buildDetailRow('Balance Before', formatCurrency(transaction['balance_before'])),
+                _buildDetailRow('Balance After', formatCurrency(transaction['balance_after'])),
+                if (transaction['location_name'] != null)
+                  _buildDetailRow('Location', transaction['location_name']),
+              ],
+            )
+          else ...[
+            if (transaction['discount_type'] != null && transaction['discount_type'] != 'none') ...[
+              _buildDetailRow('Discount', transaction['discount_type']?.toUpperCase()),
+              _buildDetailRow('Discount Applied', formatCurrency(transaction['discount_applied'])),
+            ],
+            _buildDetailRow('Balance Before', formatCurrency(transaction['balance_before'])),
+            _buildDetailRow('Balance After', formatCurrency(transaction['balance_after'])),
+            if (transaction['location_name'] != null)
+              _buildDetailRow('Location', transaction['location_name']),
           ],
         ],
       ),
@@ -510,33 +716,60 @@ class _TransactionCard extends StatelessWidget {
 
   Widget _buildDetailRow(String label, String? value) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
-              ),
+      padding: EdgeInsets.only(bottom: isMobile ? 6 : 8),
+      child: isMobile 
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 80,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    value ?? 'N/A',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 120,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    value ?? 'N/A',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          Expanded(
-            child: Text(
-              value ?? 'N/A',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1E293B),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 } 

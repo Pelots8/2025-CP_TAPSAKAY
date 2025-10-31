@@ -411,20 +411,21 @@ final List<Widget> pages = [
                     ),
                   ),
                   // Remove the extra padding after the badge, as it's included in the badge widget
-                  Expanded(
-                    child: ListView(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      children: [
-                        // Changed Icon: Icons.dashboard -> Icons.bar_chart_rounded
-                        _buildNavItem(0, Icons.bar_chart_rounded, 'Dashboard'),
-                        _buildNavItem(1, Icons.directions_bus, 'Buses'),
-                        _buildNavItem(2, Icons.badge, 'Drivers'),
-                        _buildNavItem(3, Icons.receipt_long, 'Transactions'),
-                        _buildNavItem(4, Icons.people, 'Users'),
-                        _buildNavItem(5, Icons.map, 'Live Map'),
-                      ],
-                    ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    children: [
+                      _buildNavItem(0, Icons.bar_chart_rounded, 'Dashboard'),
+                      _buildNavItem(1, Icons.directions_bus, 'Buses'),
+                      _buildNavItem(2, Icons.badge, 'Drivers'),
+                      _buildNavItem(3, Icons.receipt_long, 'Transactions'),
+                      _buildNavItem(4, Icons.people, 'Users'),
+                      _buildNavItem(5, Icons.credit_card, 'NFC Cards'), // ✅ Added this line
+                      _buildNavItem(6, Icons.map, 'Live Map'),          // ✅ Updated index
+                    ],
                   ),
+                ),
+
                   Padding(
                     padding: const EdgeInsets.all(8),
                     child: ListTile(

@@ -497,36 +497,88 @@ DropdownButtonFormField<String>(
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
-      body: Column(
-        children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.all(24),
-            color: Colors.white,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+Widget build(BuildContext context) {
+  final isMobile = MediaQuery.of(context).size.width < 600;
+  
+  return Scaffold(
+    backgroundColor: const Color(0xFFF5F7FA),
+    body: Column(
+      children: [
+        // Header
+        Container(
+          padding: EdgeInsets.all(isMobile ? 16 : 24),
+          color: Colors.white,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'User Management',
+                    style: TextStyle(
+                      fontSize: isMobile ? 24 : 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _loadUsers,
+                    tooltip: 'Refresh',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // Search and Filter - Stack on mobile
+              if (isMobile)
+                Column(
                   children: [
-                    const Text(
-                      'User Management',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
+                    TextField(
+                      onChanged: _handleSearch,
+                      decoration: InputDecoration(
+                        hintText: 'Search...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: _loadUsers,
-                      tooltip: 'Refresh',
+                    const SizedBox(height: 12),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: DropdownButton<String>(
+                        value: _selectedRoleFilter,
+                        isExpanded: true,
+                        underline: const SizedBox(),
+                        items: const [
+                          DropdownMenuItem(value: 'all', child: Text('All Roles')),
+                          DropdownMenuItem(value: 'admin', child: Text('Admin')),
+                          DropdownMenuItem(value: 'driver', child: Text('Driver')),
+                          DropdownMenuItem(value: 'passenger', child: Text('Passenger')),
+                        ],
+                        onChanged: _handleRoleFilterChange,
+                      ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 16),
+                )
+              else
                 Row(
                   children: [
                     Expanded(
@@ -570,35 +622,36 @@ DropdownButtonFormField<String>(
                     ),
                   ],
                 ),
-              ],
-            ),
+            ],
           ),
+        ),
 
-          // User List
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredUsers.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.people_outline,
-                                size: 64, color: Colors.grey.shade400),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No users found',
-                              style: TextStyle(
-                                fontSize: 18,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : Column(
+        // User List
+        Expanded(
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _filteredUsers.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Table Header
+                          Icon(Icons.people_outline,
+                              size: 64, color: Colors.grey.shade400),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No users found',
+                            style: TextStyle(
+                              fontSize: 18,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      children: [
+                        // Table Header - Only show on desktop
+                        if (!isMobile)
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 40,
@@ -666,40 +719,42 @@ DropdownButtonFormField<String>(
                               ],
                             ),
                           ),
-                          // User List
-                          Expanded(
-                            child: ListView.builder(
-                              padding: const EdgeInsets.all(24),
-                              itemCount: _filteredUsers.length,
-                              itemBuilder: (context, index) {
-                                final user = _filteredUsers[index];
-                                final isCurrentUser = user['id'] == _currentUserId;
-                                return _UserCard(
-                                  user: user,
-                                  isCurrentUser: isCurrentUser,
-                                  onToggleStatus: () => _toggleUserStatus(user),
-                                  onDelete: () => _deleteUser(user),
-                                  onViewDetails: () => _showUserDetails(user),
-                                  onTopUp: () => _showTopUpDialog(user),
-                                  getRoleColor: _getRoleColor,
-                                  getRoleIcon: _getRoleIcon,
-                                  capitalizeRole: _capitalizeRole,
-                                );
-                              },
-                            ),
+                        // User List
+                        Expanded(
+                          child: ListView.builder(
+                            padding: EdgeInsets.all(isMobile ? 16 : 24),
+                            itemCount: _filteredUsers.length,
+                            itemBuilder: (context, index) {
+                              final user = _filteredUsers[index];
+                              final isCurrentUser = user['id'] == _currentUserId;
+                              return _UserCard(
+                                user: user,
+                                isCurrentUser: isCurrentUser,
+                                isMobile: isMobile,
+                                onToggleStatus: () => _toggleUserStatus(user),
+                                onDelete: () => _deleteUser(user),
+                                onViewDetails: () => _showUserDetails(user),
+                                onTopUp: () => _showTopUpDialog(user),
+                                getRoleColor: _getRoleColor,
+                                getRoleIcon: _getRoleIcon,
+                                capitalizeRole: _capitalizeRole,
+                              );
+                            },
                           ),
-                        ],
-                      ),
-          ),
-        ],
-      ),
-    );
-  }
+                        ),
+                      ],
+                    ),
+        ),
+      ],
+    ),
+  );
+}
 }
 
 class _UserCard extends StatelessWidget {
   final Map<String, dynamic> user;
   final bool isCurrentUser;
+  final bool isMobile;
   final VoidCallback onToggleStatus;
   final VoidCallback onDelete;
   final VoidCallback onViewDetails;
@@ -711,6 +766,7 @@ class _UserCard extends StatelessWidget {
   const _UserCard({
     required this.user,
     required this.isCurrentUser,
+    required this.isMobile,
     required this.onToggleStatus,
     required this.onDelete,
     required this.onViewDetails,
@@ -726,7 +782,7 @@ class _UserCard extends StatelessWidget {
     final role = user['role'] ?? 'passenger';
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.only(bottom: isMobile ? 8 : 12),
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
@@ -736,174 +792,358 @@ class _UserCard extends StatelessWidget {
         onTap: onViewDetails,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              // User Name with Avatar
-              Expanded(
-                flex: 3,
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: getRoleColor(role).withOpacity(0.1),
-                      child: Icon(
-                        getRoleIcon(role),
-                        color: getRoleColor(role),
-                        size: 20,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        user['full_name'] ?? 'N/A',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+          padding: EdgeInsets.all(isMobile ? 12 : 16),
+          child: isMobile ? _buildMobileLayout(isActive, role) : _buildDesktopLayout(isActive, role),
+        ),
+      ),
+    );
+  }
 
-              // Contact Info
-              Expanded(
-                flex: 3,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      user['email'] ?? 'N/A',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (user['phone_number'] != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        user['phone_number'],
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 13,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ],
-                ),
+  Widget _buildMobileLayout(bool isActive, String role) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header with avatar, name, and current user badge
+        Row(
+          children: [
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: getRoleColor(role).withOpacity(0.1),
+              child: Icon(
+                getRoleIcon(role),
+                color: getRoleColor(role),
+                size: 24,
               ),
-
-              // Role Badge
-              Expanded(
-                flex: 2,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: getRoleColor(role).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        capitalizeRole(role),
-                        style: TextStyle(
-                          color: getRoleColor(role),
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          user['full_name'] ?? 'N/A',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Status
-              Expanded(
-                flex: 2,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isActive
-                            ? Colors.green.withOpacity(0.1)
-                            : Colors.grey.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        isActive ? 'ACTIVE' : 'INACTIVE',
-                        style: TextStyle(
-                          color: isActive ? Colors.green : Colors.grey,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 11,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Actions
-              SizedBox(
-                width: 140,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (!isCurrentUser) ...[
-                      // Top Up Button
-                      IconButton(
-                        icon: Icon(
-                          Icons.account_balance_wallet,
-                          color: Colors.green.shade700,
-                          size: 20,
-                        ),
-                        onPressed: onTopUp,
-                        tooltip: 'Top Up Wallet',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                      const SizedBox(width: 8),
-                      // Deactivate Button
-                      IconButton(
-                        icon: const Icon(Icons.block, color: Colors.red, size: 20),
-                        onPressed: onDelete,
-                        tooltip: 'Deactivate User',
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
-                      ),
-                    ] else
-                      Chip(
-                        label: const Text(
-                          'You',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                      if (isCurrentUser)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.blue.shade200),
+                          ),
+                          child: const Text(
+                            'You',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
                           ),
                         ),
-                        backgroundColor: Colors.blue.shade50,
-                        side: BorderSide(color: Colors.blue.shade200),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    user['email'] ?? 'N/A',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 12),
+        
+        // Phone, Role, and Status in a row
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            if (user['phone_number'] != null)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.phone, size: 14, color: Colors.grey.shade600),
+                    const SizedBox(width: 4),
+                    Text(
+                      user['phone_number'],
+                      style: TextStyle(
+                        color: Colors.grey.shade700,
+                        fontSize: 12,
                       ),
+                    ),
                   ],
+                ),
+              ),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: getRoleColor(role).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                capitalizeRole(role),
+                style: TextStyle(
+                  color: getRoleColor(role),
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: isActive
+                    ? Colors.green.withOpacity(0.1)
+                    : Colors.grey.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                isActive ? 'ACTIVE' : 'INACTIVE',
+                style: TextStyle(
+                  color: isActive ? Colors.green : Colors.grey,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+        
+        // Actions
+        if (!isCurrentUser) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onTopUp,
+                  icon: Icon(Icons.account_balance_wallet, size: 18, color: Colors.green.shade700),
+                  label: const Text('Top Up'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green.shade700,
+                    side: BorderSide(color: Colors.green.shade200),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.block, size: 18, color: Colors.red),
+                  label: const Text('Deactivate'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: BorderSide(color: Colors.red.shade200),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildDesktopLayout(bool isActive, String role) {
+    return Row(
+      children: [
+        // User Name with Avatar
+        Expanded(
+          flex: 3,
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: getRoleColor(role).withOpacity(0.1),
+                child: Icon(
+                  getRoleIcon(role),
+                  color: getRoleColor(role),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  user['full_name'] ?? 'N/A',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
         ),
-      ),
+
+        // Contact Info
+        Expanded(
+          flex: 3,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                user['email'] ?? 'N/A',
+                style: TextStyle(
+                  color: Colors.grey.shade700,
+                  fontSize: 14,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+              if (user['phone_number'] != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  user['phone_number'],
+                  style: TextStyle(
+                    color: Colors.grey.shade500,
+                    fontSize: 13,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ],
+          ),
+        ),
+
+        // Role Badge
+        Expanded(
+          flex: 2,
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: getRoleColor(role).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  capitalizeRole(role),
+                  style: TextStyle(
+                    color: getRoleColor(role),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Status
+        Expanded(
+          flex: 2,
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? Colors.green.withOpacity(0.1)
+                      : Colors.grey.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  isActive ? 'ACTIVE' : 'INACTIVE',
+                  style: TextStyle(
+                    color: isActive ? Colors.green : Colors.grey,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 11,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Actions
+        SizedBox(
+          width: 140,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              if (!isCurrentUser) ...[
+                // Top Up Button
+                IconButton(
+                  icon: Icon(
+                    Icons.account_balance_wallet,
+                    color: Colors.green.shade700,
+                    size: 20,
+                  ),
+                  onPressed: onTopUp,
+                  tooltip: 'Top Up Wallet',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+                const SizedBox(width: 8),
+                // Deactivate Button
+                IconButton(
+                  icon: const Icon(Icons.block, color: Colors.red, size: 20),
+                  onPressed: onDelete,
+                  tooltip: 'Deactivate User',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ] else
+                Chip(
+                  label: const Text(
+                    'You',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  backgroundColor: Colors.blue.shade50,
+                  side: BorderSide(color: Colors.blue.shade200),
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
