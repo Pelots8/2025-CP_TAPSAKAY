@@ -31,7 +31,7 @@ class PassengerTapService {
     }
   }
 
-  /// Tap In - Start a passenger trip
+  /// Tap In - Start a passenger trip (pending driver confirmation)
   static Future<Map<String, dynamic>> tapIn({
     required String passengerId,
     required String nfcCardId,
@@ -81,7 +81,7 @@ class PassengerTapService {
         throw Exception('You already have an ongoing trip on this bus');
       }
 
-      // 3. Create passenger trip record
+      // 3. Create passenger trip record (pending driver confirmation)
       final passengerTrip = await _supabase.from('passenger_trips').insert({
         'trip_id': tripId,
         'passenger_id': passengerId,
@@ -91,6 +91,8 @@ class PassengerTapService {
         'tap_in_longitude': longitude,
         'tap_in_location': locationName,
         'status': 'ongoing',
+        'passenger_count': 1, // 🚀 Default to 1, driver will update
+        'driver_confirmed': false, // 🚀 Waiting for driver confirmation
       }).select().single();
 
       // 4. Create tap-in transaction (₱0 for now, fare charged on tap out)
@@ -111,16 +113,13 @@ class PassengerTapService {
         'status': 'success',
       }).select().single();
 
-      // 5. Update trip passenger count
-      await _supabase.rpc('increment_trip_passengers', params: {
-        'trip_id': tripId,
-      });
+
 
       return {
         'success': true,
         'passenger_trip': passengerTrip,
         'transaction': transaction,
-        'message': 'Tapped in successfully',
+        'message': 'Waiting for driver confirmation...',
       };
     } catch (e) {
       print('Error during tap in: $e');
@@ -128,125 +127,266 @@ class PassengerTapService {
     }
   }
 
-  /// Tap Out - End a passenger trip and charge fare
-  static Future<Map<String, dynamic>> tapOut({
-    required String passengerId,
-    required String nfcCardId,
+  /// 🚀 NEW: Confirm passenger count (called by driver)
+static Future<Map<String, dynamic>> confirmPassengerCount({
+  required String passengerTripId,
+  required int passengerCount,
+  required String tripId,
+  required Map<String, int> passengerBreakdown,
+}) async {
+  try {
+    if (passengerCount < 1 || passengerCount > 10) {
+      throw Exception('Invalid passenger count (1-10)');
+    }
+
+    // Validate breakdown matches total
+    int breakdownTotal = passengerBreakdown.values.fold(0, (sum, val) => sum + val);
+    if (breakdownTotal != passengerCount) {
+      throw Exception('Passenger breakdown must match total count');
+    }
+
+    // 1. Update passenger trip with confirmed count AND breakdown
+    final updatedTrip = await _supabase.from('passenger_trips').update({
+      'passenger_count': passengerCount,
+      'passenger_breakdown': passengerBreakdown,
+      'driver_confirmed': true,
+      'driver_confirmed_at': DateTime.now().toIso8601String(),
+    }).eq('id', passengerTripId).select().single();
+
+    // 2. 🚀 ADD THE FULL PASSENGER COUNT (not minus 1)
+    await _supabase.rpc('increment_trip_passengers_by', params: {
+      'trip_id': tripId,
+      'count': passengerCount, // ✅ Add all passengers when confirmed
+    });
+
+    return {
+      'success': true,
+      'passenger_trip': updatedTrip,
+      'message': 'Passenger count confirmed: $passengerCount',
+    };
+  } catch (e) {
+    print('Error confirming passenger count: $e');
+    throw Exception(e.toString().replaceAll('Exception: ', ''));
+  }
+}
+
+  /// 🚀 NEW: Reject/Cancel tap in (called by driver)
+  static Future<void> rejectTapIn({
+    required String passengerTripId,
     required String tripId,
-    required String busId,
-    required String driverId,
-    required double latitude,
-    required double longitude,
-    String? locationName,
   }) async {
     try {
-      // 1. Get the ongoing passenger trip
-      final passengerTrip = await _supabase
-          .from('passenger_trips')
-          .select()
-          .eq('passenger_id', passengerId)
-          .eq('trip_id', tripId)
-          .eq('status', 'ongoing')
-          .maybeSingle();
-
-      if (passengerTrip == null) {
-        throw Exception('No ongoing trip found. Please tap in first.');
-      }
-
-      // 2. Get NFC card details
-      final card = await _supabase
-          .from('nfc_cards')
-          .select()
-          .eq('id', nfcCardId)
-          .single();
-
-      final currentBalance = (card['balance'] ?? 0.0).toDouble();
-      final discountType = card['discount_type'] ?? 'none';
-
-      // 3. Calculate distance traveled
-      final tapInLat = (passengerTrip['tap_in_latitude'] ?? 0.0).toDouble();
-      final tapInLng = (passengerTrip['tap_in_longitude'] ?? 0.0).toDouble();
-      
-      final distanceInMeters = Geolocator.distanceBetween(
-        tapInLat,
-        tapInLng,
-        latitude,
-        longitude,
-      );
-      
-      final distanceInKm = distanceInMeters / 1000;
-
-      // 4. Calculate fare
-      final baseFare = calculateFare(distanceInKm);
-      final discountAmount = calculateDiscount(baseFare, discountType);
-      final finalFare = baseFare - discountAmount;
-
-      // 5. Check if card has sufficient balance
-      if (currentBalance < finalFare) {
-        throw Exception(
-          'Insufficient balance. Fare: ₱${finalFare.toStringAsFixed(2)}, Balance: ₱${currentBalance.toStringAsFixed(2)}'
-        );
-      }
-
-      final newBalance = currentBalance - finalFare;
-
-      // 6. Update passenger trip record
+      // 1. Cancel the passenger trip
       await _supabase.from('passenger_trips').update({
-        'tap_out_time': DateTime.now().toIso8601String(),
-        'tap_out_latitude': latitude,
-        'tap_out_longitude': longitude,
-        'tap_out_location': locationName,
-        'distance_traveled': distanceInKm,
-        'fare_amount': baseFare,
-        'discount_applied': discountAmount,
-        'final_amount': finalFare,
-        'status': 'completed',
-      }).eq('id', passengerTrip['id']);
+        'status': 'cancelled',
+      }).eq('id', passengerTripId);
 
-      // 7. Create tap-out transaction
-      final transaction = await _supabase.from('transactions').insert({
+      // 2. Decrement trip passenger count
+      await _supabase.rpc('decrement_trip_passengers', params: {
         'trip_id': tripId,
-        'passenger_id': passengerId,
-        'nfc_card_id': nfcCardId,
-        'bus_id': busId,
-        'driver_id': driverId,
-        'transaction_type': 'tap_out',
-        'amount': finalFare,
-        'balance_before': currentBalance,
-        'balance_after': newBalance,
-        'discount_applied': discountAmount,
-        'discount_type': discountType,
-        'location_latitude': latitude,
-        'location_longitude': longitude,
-        'location_name': locationName,
-        'status': 'success',
-      }).select().single();
-
-      // 8. Update NFC card balance
-      await _supabase.from('nfc_cards').update({
-        'balance': newBalance,
-        'last_used_at': DateTime.now().toIso8601String(),
-      }).eq('id', nfcCardId);
-
-      // 9. Update trip total fare collected
-      await _supabase.rpc('update_trip_fare', params: {
-        'trip_id': tripId,
-        'fare_to_add': finalFare,
       });
-
-      return {
-        'success': true,
-        'transaction': transaction,
-        'fare': finalFare,
-        'distance': distanceInKm,
-        'new_balance': newBalance,
-        'message': 'Tapped out successfully. Fare: ₱${finalFare.toStringAsFixed(2)}',
-      };
     } catch (e) {
-      print('Error during tap out: $e');
-      throw Exception(e.toString().replaceAll('Exception: ', ''));
+      print('Error rejecting tap in: $e');
+      throw Exception('Failed to reject tap in: ${e.toString()}');
     }
   }
+
+  /// Tap Out - End a passenger trip and charge fare (multiplied by passenger_count)
+ static Future<Map<String, dynamic>> tapOut({
+  required String passengerId,
+  required String nfcCardId,
+  required String tripId,
+  required String busId,
+  required String driverId,
+  required double latitude,
+  required double longitude,
+  String? locationName,
+}) async {
+  try {
+    // 1. Get the ongoing passenger trip
+    final passengerTrip = await _supabase
+        .from('passenger_trips')
+        .select()
+        .eq('passenger_id', passengerId)
+        .eq('trip_id', tripId)
+        .eq('status', 'ongoing')
+        .maybeSingle();
+
+    if (passengerTrip == null) {
+      throw Exception('No ongoing trip found. Please tap in first.');
+    }
+
+    // 🚀 Check if driver has confirmed
+    if (passengerTrip['driver_confirmed'] != true) {
+      throw Exception('Waiting for driver confirmation. Please try again.');
+    }
+
+    // 🚀 Get passenger count and breakdown
+    final passengerCount = (passengerTrip['passenger_count'] ?? 1) as int;
+    final passengerBreakdown = passengerTrip['passenger_breakdown'] as Map<String, dynamic>? 
+        ?? {'regular': passengerCount, 'student': 0, 'senior': 0, 'pwd': 0};
+
+    // 2. Get NFC card details
+    final card = await _supabase
+        .from('nfc_cards')
+        .select()
+        .eq('id', nfcCardId)
+        .single();
+
+    final currentBalance = (card['balance'] ?? 0.0).toDouble();
+
+    // 3. Calculate distance traveled
+    final tapInLat = (passengerTrip['tap_in_latitude'] ?? 0.0).toDouble();
+    final tapInLng = (passengerTrip['tap_in_longitude'] ?? 0.0).toDouble();
+    
+    final distanceInMeters = Geolocator.distanceBetween(
+      tapInLat,
+      tapInLng,
+      latitude,
+      longitude,
+    );
+    
+    final distanceInKm = distanceInMeters / 1000;
+
+    // 4. 🚀 Calculate fare based on passenger breakdown
+    final baseFarePerPassenger = calculateFare(distanceInKm);
+    
+    // Extract passenger counts by type
+    final regularCount = (passengerBreakdown['regular'] ?? 0) as int;
+    final studentCount = (passengerBreakdown['student'] ?? 0) as int;
+    final seniorCount = (passengerBreakdown['senior'] ?? 0) as int;
+    final pwdCount = (passengerBreakdown['pwd'] ?? 0) as int;
+    
+    // Calculate fare for each passenger type
+    final regularFare = baseFarePerPassenger * regularCount;
+    final studentFare = baseFarePerPassenger * 0.8 * studentCount; // 20% discount
+    final seniorFare = baseFarePerPassenger * 0.8 * seniorCount;   // 20% discount
+    final pwdFare = baseFarePerPassenger * 0.8 * pwdCount;         // 20% discount
+    
+    // Calculate totals
+    final totalBaseFare = baseFarePerPassenger * passengerCount;
+    final totalFinalFare = regularFare + studentFare + seniorFare + pwdFare;
+    final totalDiscount = totalBaseFare - totalFinalFare;
+
+    // 5. Check if card has sufficient balance
+    if (currentBalance < totalFinalFare) {
+      throw Exception(
+        'Insufficient balance. Total fare for $passengerCount passenger(s): ₱${totalFinalFare.toStringAsFixed(2)}, Balance: ₱${currentBalance.toStringAsFixed(2)}'
+      );
+    }
+
+    final newBalance = currentBalance - totalFinalFare;
+
+    // 6. Update passenger trip record
+    await _supabase.from('passenger_trips').update({
+      'tap_out_time': DateTime.now().toIso8601String(),
+      'tap_out_latitude': latitude,
+      'tap_out_longitude': longitude,
+      'tap_out_location': locationName,
+      'distance_traveled': distanceInKm,
+      'fare_amount': totalBaseFare,
+      'discount_applied': totalDiscount,
+      'final_amount': totalFinalFare,
+      'status': 'completed',
+    }).eq('id', passengerTrip['id']);
+
+    // 7. Create tap-out transaction
+    final transaction = await _supabase.from('transactions').insert({
+      'trip_id': tripId,
+      'passenger_id': passengerId,
+      'nfc_card_id': nfcCardId,
+      'bus_id': busId,
+      'driver_id': driverId,
+      'transaction_type': 'tap_out',
+      'amount': totalFinalFare,
+      'balance_before': currentBalance,
+      'balance_after': newBalance,
+      'discount_applied': totalDiscount,
+      'discount_type': 'none', // 🚀 Changed from single type to 'mixed' for breakdown
+      'location_latitude': latitude,
+      'location_longitude': longitude,
+      'location_name': locationName,
+      'status': 'success',
+    }).select().single();
+
+    // 8. Update NFC card balance
+    await _supabase.from('nfc_cards').update({
+      'balance': newBalance,
+      'last_used_at': DateTime.now().toIso8601String(),
+    }).eq('id', nfcCardId);
+
+
+// 9. Update trip total fare collected (direct update method)
+try {
+  print('🔵 Updating trip fare...');
+  
+  // Get current trip data
+  final tripData = await _supabase
+      .from('trips')
+      .select('total_fare_collected')
+      .eq('id', tripId)
+      .single();
+  
+  final currentFare = (tripData['total_fare_collected'] ?? 0.0).toDouble();
+  final newFare = currentFare + totalFinalFare;
+  
+  print('   Current: ₱${currentFare.toStringAsFixed(2)}');
+  print('   Adding: ₱${totalFinalFare.toStringAsFixed(2)}');
+  print('   New total: ₱${newFare.toStringAsFixed(2)}');
+  
+  // Update the trip
+  final updateResult = await _supabase
+      .from('trips')
+      .update({
+        'total_fare_collected': newFare,
+        'updated_at': DateTime.now().toIso8601String(),
+      })
+      .eq('id', tripId)
+      .select('total_fare_collected');
+  
+  print('✅ Trip fare updated successfully!');
+  print('   Result: $updateResult');
+  
+  if (updateResult.isNotEmpty) {
+    final confirmedFare = updateResult[0]['total_fare_collected'];
+    print('   Confirmed fare in DB: ₱${confirmedFare}');
+  }
+} catch (e) {
+  print('❌ ERROR updating trip fare: $e');
+  print('   Type: ${e.runtimeType}');
+  print('   Stack: ${e.toString()}');
+}
+
+    // 🚀 Build detailed breakdown message
+    String breakdownMessage = 'Tapped out successfully.\n';
+    breakdownMessage += '$passengerCount passenger(s) total:\n';
+    if (regularCount > 0) breakdownMessage += '• $regularCount Regular: ₱${regularFare.toStringAsFixed(2)}\n';
+    if (studentCount > 0) breakdownMessage += '• $studentCount Student: ₱${studentFare.toStringAsFixed(2)}\n';
+    if (seniorCount > 0) breakdownMessage += '• $seniorCount Senior: ₱${seniorFare.toStringAsFixed(2)}\n';
+    if (pwdCount > 0) breakdownMessage += '• $pwdCount PWD: ₱${pwdFare.toStringAsFixed(2)}\n';
+    breakdownMessage += 'Total: ₱${totalFinalFare.toStringAsFixed(2)}';
+
+    return {
+      'success': true,
+      'transaction': transaction,
+      'fare': totalFinalFare,
+      'passenger_count': passengerCount,
+      'passenger_breakdown': passengerBreakdown,
+      'fare_breakdown': {
+        'regular': regularFare,
+        'student': studentFare,
+        'senior': seniorFare,
+        'pwd': pwdFare,
+      },
+      'distance': distanceInKm,
+      'new_balance': newBalance,
+      'message': breakdownMessage,
+    };
+  } catch (e) {
+    print('Error during tap out: $e');
+    throw Exception(e.toString().replaceAll('Exception: ', ''));
+  }
+}
 
   /// Get passenger's current ongoing trip
   static Future<Map<String, dynamic>?> getCurrentPassengerTrip(String passengerId) async {
@@ -321,6 +461,37 @@ class PassengerTapService {
     } catch (e) {
       print('Error fetching trip history: $e');
       throw Exception('Failed to fetch trip history: ${e.toString()}');
+    }
+  }
+
+  /// 🚀 NEW: Get pending tap-ins for driver to confirm
+  static Future<List<Map<String, dynamic>>> getPendingTapIns(String tripId) async {
+    try {
+      final response = await _supabase
+          .from('passenger_trips')
+          .select('''
+            *,
+            users!passenger_trips_passenger_id_fkey(
+              id,
+              full_name,
+              email
+            ),
+            nfc_cards!passenger_trips_nfc_card_id_fkey(
+              id,
+              card_number,
+              balance,
+              discount_type
+            )
+          ''')
+          .eq('trip_id', tripId)
+          .eq('status', 'ongoing')
+          .eq('driver_confirmed', false)
+          .order('tap_in_time', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      print('Error fetching pending tap-ins: $e');
+      return [];
     }
   }
 }

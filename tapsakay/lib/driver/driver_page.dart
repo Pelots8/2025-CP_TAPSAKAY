@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:tapsakay/driver/driver_profile_page.dart';
 import 'package:tapsakay/driver/driver_service.dart';
 import 'package:tapsakay/driver/driver_trip_history_page.dart';
+import 'package:tapsakay/passenger/passenger_tap_service.dart';
 import 'dart:async';
 import '../user/login_api.dart';
 import '../services/trip_service.dart';
@@ -30,6 +31,8 @@ class _DriverDashboardState extends State<DriverDashboard> {
   StreamSubscription<Position>? _locationSubscription;
   Map<String, dynamic>? _currentTrip;
   RealtimeChannel? _tripChannel;
+  List<Map<String, dynamic>> _pendingTapIns = [];
+  RealtimeChannel? _passengerTripsChannel;
   
 
   @override
@@ -42,6 +45,7 @@ class _DriverDashboardState extends State<DriverDashboard> {
   void dispose() {
     _locationSubscription?.cancel();
     _tripChannel?.unsubscribe();
+    _passengerTripsChannel?.unsubscribe();
     super.dispose();
     
   }
@@ -186,7 +190,9 @@ void _subscribeToCurrentTrip() {
   if (_currentTrip == null) return;
   
   _tripChannel?.unsubscribe();
+  _passengerTripsChannel?.unsubscribe();
   
+  // Subscribe to trip updates
   _tripChannel = Supabase.instance.client
     .channel('trip-${_currentTrip!['id']}')
     .onPostgresChanges(
@@ -200,7 +206,6 @@ void _subscribeToCurrentTrip() {
       ),
       callback: (payload) async {
         if (mounted && _currentTrip != null) {
-          // Reload trip details
           final updatedTrip = await TripService.getTripDetails(_currentTrip!['id']);
           if (updatedTrip != null && mounted) {
             setState(() {
@@ -211,6 +216,485 @@ void _subscribeToCurrentTrip() {
       },
     )
     .subscribe();
+
+  // 🚀 NEW: Subscribe to passenger_trips changes
+  _passengerTripsChannel = Supabase.instance.client
+    .channel('passenger-trips-${_currentTrip!['id']}')
+    .onPostgresChanges(
+      event: PostgresChangeEvent.insert,
+      schema: 'public',
+      table: 'passenger_trips',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.eq,
+        column: 'trip_id',
+        value: _currentTrip!['id'],
+      ),
+      callback: (payload) async {
+        // Load pending tap-ins when new passenger taps in
+        await _loadPendingTapIns();
+      },
+    )
+    .subscribe();
+  
+  // Load initial pending tap-ins
+  _loadPendingTapIns();
+}
+
+Future<void> _loadPendingTapIns() async {
+  if (_currentTrip == null) return;
+  
+  try {
+    final pending = await PassengerTapService.getPendingTapIns(_currentTrip!['id']);
+    
+    if (mounted) {
+      setState(() {
+        _pendingTapIns = pending;
+      });
+      
+      // Show modal if there are pending tap-ins
+      if (pending.isNotEmpty) {
+        _showPendingTapInsModal();
+      }
+    }
+  } catch (e) {
+    print('Error loading pending tap-ins: $e');
+  }
+}
+
+void _showPendingTapInsModal() {
+  if (_pendingTapIns.isEmpty) return;
+  
+  showModalBottomSheet(
+    context: context,
+    isDismissible: false,
+    enableDrag: false,
+    backgroundColor: Colors.transparent,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setModalState) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 10,
+              offset: const Offset(0, -4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Header
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.orange[50],
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.people, color: Colors.orange[700], size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Confirm Boarding',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '${_pendingTapIns.length} passenger(s) waiting',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            
+            // List of pending passengers
+            ..._pendingTapIns.map((passengerTrip) {
+              final passenger = passengerTrip['users'];
+              final nfcCard = passengerTrip['nfc_cards'];
+              final tapInTime = DateTime.parse(passengerTrip['tap_in_time']);
+              final timeAgo = DateTime.now().difference(tapInTime).inSeconds;
+              
+              return Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: Colors.blue[700],
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              passenger['full_name'][0].toUpperCase(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                passenger['full_name'],
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                'Card: ${nfcCard['card_number']}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[600],
+                                ),
+                              ),
+                              Text(
+                                'Balance: ₱${(nfcCard['balance'] ?? 0.0).toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[500],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orange[100],
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            '${timeAgo}s ago',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.orange[700],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'How many passengers?',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    
+                    // Passenger count buttons
+                    Wrap(
+                      spacing: 8,
+                      children: List.generate(5, (index) {
+                        final count = index + 1;
+                        return SizedBox(
+                          width: 60,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: () => _confirmPassengerCount(
+                              passengerTrip['id'],
+                              count,
+                              setModalState,
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue[700],
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              padding: EdgeInsets.zero,
+                            ),
+                            child: Text(
+                              '$count',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+                    
+                    // Reject button
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton.icon(
+                        onPressed: () => _rejectTapIn(
+                          passengerTrip['id'],
+                          setModalState,
+                        ),
+                        icon: const Icon(Icons.close, color: Colors.red),
+                        label: const Text(
+                          'Reject',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _confirmPassengerCount(
+  String passengerTripId,
+  int count,
+  StateSetter setModalState,
+) async {
+  if (count == 1) {
+    // Single passenger - confirm immediately with default breakdown
+    try {
+      await PassengerTapService.confirmPassengerCount(
+        passengerTripId: passengerTripId,
+        passengerCount: 1,
+        tripId: _currentTrip!['id'],
+        passengerBreakdown: {'regular': 1, 'student': 0, 'senior': 0, 'pwd': 0},
+      );
+      
+      // Remove from pending and close modal
+      setModalState(() {
+        _pendingTapIns.removeWhere((pt) => pt['id'] == passengerTripId);
+      });
+      setState(() {
+        _pendingTapIns.removeWhere((pt) => pt['id'] == passengerTripId);
+      });
+      if (_pendingTapIns.isEmpty) Navigator.pop(context);
+      
+      // Reload trip
+      final updatedTrip = await TripService.getTripDetails(_currentTrip!['id']);
+      if (updatedTrip != null && mounted) {
+        setState(() => _currentTrip = updatedTrip);
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Confirmed: 1 passenger'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: ${e.toString()}'), backgroundColor: Colors.red),
+      );
+    }
+  } else {
+    // Multiple passengers - show breakdown modal
+    Navigator.pop(context); // Close pending modal first
+    _showPassengerBreakdownModal(passengerTripId, count);
+  }
+}
+
+void _showPassengerBreakdownModal(String passengerTripId, int totalCount) {
+  int regular = totalCount;
+  int student = 0;
+  int senior = 0;
+  int pwd = 0;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setDialogState) {
+        int remaining = totalCount - (regular + student + senior + pwd);
+        
+        return AlertDialog(
+          title: Text('Passenger Breakdown ($totalCount passengers)'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Remaining: $remaining',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: remaining == 0 ? Colors.green : Colors.orange,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildPassengerTypeRow('Regular', regular, (val) {
+                  setDialogState(() => regular = val);
+                }),
+                _buildPassengerTypeRow('Student (20% off)', student, (val) {
+                  setDialogState(() => student = val);
+                }),
+                _buildPassengerTypeRow('Senior (20% off)', senior, (val) {
+                  setDialogState(() => senior = val);
+                }),
+                _buildPassengerTypeRow('PWD (20% off)', pwd, (val) {
+                  setDialogState(() => pwd = val);
+                }),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _loadPendingTapIns(); // Reload pending list
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: remaining == 0
+                  ? () async {
+                      Navigator.pop(context);
+                      try {
+                        await PassengerTapService.confirmPassengerCount(
+                          passengerTripId: passengerTripId,
+                          passengerCount: totalCount,
+                          tripId: _currentTrip!['id'],
+                          passengerBreakdown: {
+                            'regular': regular,
+                            'student': student,
+                            'senior': senior,
+                            'pwd': pwd,
+                          },
+                        );
+                        
+                        setState(() {
+                          _pendingTapIns.removeWhere((pt) => pt['id'] == passengerTripId);
+                        });
+                        
+                        final updatedTrip = await TripService.getTripDetails(_currentTrip!['id']);
+                        if (updatedTrip != null && mounted) {
+                          setState(() => _currentTrip = updatedTrip);
+                        }
+                        
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Confirmed: $totalCount passengers'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                        );
+                      }
+                    }
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: remaining == 0 ? Colors.blue[700] : Colors.grey,
+              ),
+              child: const Text('Confirm', style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+Widget _buildPassengerTypeRow(String label, int value, Function(int) onChanged) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      children: [
+        Expanded(child: Text(label, style: const TextStyle(fontSize: 14))),
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline),
+          onPressed: value > 0 ? () => onChanged(value - 1) : null,
+          color: Colors.red,
+        ),
+        Container(
+          width: 40,
+          alignment: Alignment.center,
+          child: Text(
+            '$value',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          onPressed: () => onChanged(value + 1),
+          color: Colors.green,
+        ),
+      ],
+    ),
+  );
+}
+
+Future<void> _rejectTapIn(
+  String passengerTripId,
+  StateSetter setModalState,
+) async {
+  try {
+    await PassengerTapService.rejectTapIn(
+      passengerTripId: passengerTripId,
+      tripId: _currentTrip!['id'],
+    );
+    
+    // Remove from pending list
+    setModalState(() {
+      _pendingTapIns.removeWhere((pt) => pt['id'] == passengerTripId);
+    });
+    
+    setState(() {
+      _pendingTapIns.removeWhere((pt) => pt['id'] == passengerTripId);
+    });
+    
+    // Close modal if no more pending
+    if (_pendingTapIns.isEmpty) {
+      Navigator.pop(context);
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Boarding rejected'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Error: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
 }
 
 Future<void> _toggleDutyStatus() async {

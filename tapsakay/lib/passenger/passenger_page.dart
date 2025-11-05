@@ -40,6 +40,7 @@ class _PassengerHomeState extends State<PassengerHome> {
     _subscribeToActiveBuses();
     _loadUserNFCCards();
     _loadCurrentPassengerTrip();
+    _subscribeToPassengerTripUpdates();
   }
 
   @override
@@ -76,6 +77,47 @@ class _PassengerHomeState extends State<PassengerHome> {
       print('Error loading current trip: $e');
     }
   }
+
+  void _subscribeToPassengerTripUpdates() {
+  final userId = Supabase.instance.client.auth.currentUser?.id;
+  if (userId == null) return;
+  
+  // Subscribe to updates on passenger's trips
+  Supabase.instance.client
+    .channel('passenger-trip-updates-$userId')
+    .onPostgresChanges(
+      event: PostgresChangeEvent.update,
+      schema: 'public',
+      table: 'passenger_trips',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.eq,
+        column: 'passenger_id',
+        value: userId,
+      ),
+      callback: (payload) async {
+        // Reload current trip when updated
+        await _loadCurrentPassengerTrip();
+        
+        // Show notification if driver confirmed
+        final newRecord = payload.newRecord;
+        if (newRecord['driver_confirmed'] == true && mounted) {
+          final passengerCount = newRecord['passenger_count'] ?? 1;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                passengerCount > 1
+                    ? 'Driver confirmed: $passengerCount passengers'
+                    : 'Driver confirmed your boarding',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      },
+    )
+    .subscribe();
+}
 
   void _subscribeToActiveBuses() {
     _busesChannel = BusService.subscribeToActiveBuses(
@@ -120,6 +162,24 @@ class _PassengerHomeState extends State<PassengerHome> {
     setState(() => _isLoadingCards = false);
   }
 } 
+
+String _formatDuration(String tapInTimeStr) {
+  try {
+    final tapInTime = DateTime.parse(tapInTimeStr).toLocal();
+    final now = DateTime.now();
+    final duration = now.difference(tapInTime);
+    
+    if (duration.isNegative) return '0 min';
+    
+    if (duration.inHours > 0) {
+      return '${duration.inHours}h ${duration.inMinutes % 60}m';
+    } else {
+      return '${duration.inMinutes}m';
+    }
+  } catch (e) {
+    return 'N/A';
+  }
+}
 
   Future<void> _getCurrentLocation() async {
     try {
@@ -539,7 +599,7 @@ Positioned(
   );
   
   // Check if within 5 meters
-  return distance <= 5.0;
+  return distance <= 5500.0;
 }
 
 Map<String, dynamic>? _getNearestBus() {
@@ -921,9 +981,183 @@ Widget _buildOnboardSheet() {
   final trip = _currentPassengerTrip!['trips'];
   final bus = trip['buses'];
   final nfcCard = _currentPassengerTrip!['nfc_cards'];
-  final tapInTime = DateTime.parse(_currentPassengerTrip!['tap_in_time']);
-  final duration = DateTime.now().difference(tapInTime);
+
   
+  // 🚀 Check if driver has confirmed
+  final isConfirmed = _currentPassengerTrip!['driver_confirmed'] == true;
+  final passengerCount = _currentPassengerTrip!['passenger_count'] ?? 1;
+  
+  // 🚀 If not confirmed, show waiting state
+  if (!isConfirmed) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.orange[700]!, Colors.orange[500]!],
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 15,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Pulsing indicator
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'WAITING FOR DRIVER',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          
+          // Bus Info
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.directions_bus,
+                  color: Colors.white,
+                  size: 32,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      bus['bus_number'] ?? 'N/A',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      bus['route_name'] ?? 'No route',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.9),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          
+          // Waiting message
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.hourglass_empty, color: Colors.white.withOpacity(0.9), size: 32),
+                const SizedBox(height: 8),
+                Text(
+                  'Driver is confirming your boarding',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Please wait...',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.7),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          
+          // Info text
+          Text(
+            'The driver will confirm the number of passengers traveling with you.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.8),
+              fontSize: 12,
+            ),
+          ),
+
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: ElevatedButton.icon(
+              onPressed: null, // Disabled
+              icon: Icon(Icons.exit_to_app, color: Colors.grey[400]),
+              label: Text(
+                'Waiting for Confirmation',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[400],
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey[200],
+                disabledBackgroundColor: Colors.grey[200],
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // 🚀 Confirmed state - show normal onboard UI
   return Container(
     padding: const EdgeInsets.all(20),
     decoration: BoxDecoration(
@@ -963,9 +1197,11 @@ Widget _buildOnboardSheet() {
                 ),
               ),
               const SizedBox(width: 8),
-              const Text(
-                'ON BOARD',
-                style: TextStyle(
+              Text(
+                passengerCount > 1 
+                    ? 'ON BOARD ($passengerCount passengers)' 
+                    : 'ON BOARD',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
@@ -1033,21 +1269,21 @@ Widget _buildOnboardSheet() {
                   children: [
                     Icon(Icons.access_time, color: Colors.white.withOpacity(0.9), size: 20),
                     const SizedBox(height: 4),
-                    Text(
-                      '${duration.inMinutes} min',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                      Text(
+                        _formatDuration(_currentPassengerTrip!['tap_in_time']),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Duration',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 11,
+                      Text(
+                        'Duration',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.8),
+                          fontSize: 11,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -1085,6 +1321,34 @@ Widget _buildOnboardSheet() {
             ),
           ],
         ),
+        
+        // 🚀 Show passenger count if > 1
+        if (passengerCount > 1) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.people, color: Colors.white.withOpacity(0.9), size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  '$passengerCount passengers traveling together',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        
         const SizedBox(height: 20),
         
         // Tap Out Button
@@ -1315,7 +1579,7 @@ Widget _buildOnboardSheet() {
 
 
 Future<void> _handleTapIn(Map<String, dynamic> driver) async {
-  Navigator.pop(context); // Close dialog
+  
   
   // Check if user has NFC cards
   if (_userNFCCards.isEmpty) {
@@ -1373,18 +1637,35 @@ Future<void> _handleTapIn(Map<String, dynamic> driver) async {
       longitude: position.longitude,
     );
     
-    if (result['success']) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result['message']),
-          backgroundColor: Colors.green,
-        ),
-      );
-      
-      // 🚀 FIX: Reload current trip and cards
-      await _loadCurrentPassengerTrip();
-      await _loadUserNFCCards();
-    }
+if (result['success']) {
+  // Show waiting for confirmation message
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Row(
+        children: [
+          const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              color: Colors.white,
+              strokeWidth: 2,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(result['message']),
+          ),
+        ],
+      ),
+      backgroundColor: Colors.orange[700],
+      duration: const Duration(seconds: 3),
+    ),
+  );
+  
+  // 🚀 FIX: Reload current trip and cards
+  await _loadCurrentPassengerTrip();
+  await _loadUserNFCCards();
+}
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1684,29 +1965,45 @@ Future<void> _handleTapOut() async {
       longitude: position.longitude,
     );
     
-    if (result['success']) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Trip Complete'),
-          content: Text(
-            'Fare: ₱${result['fare'].toStringAsFixed(2)}\n'
-            'Distance: ${result['distance'].toStringAsFixed(2)} km\n'
-            'New Balance: ₱${result['new_balance'].toStringAsFixed(2)}'
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
+if (result['success']) {
+  final passengerCount = result['passenger_count'] ?? 1;
+  final farePerPassenger = result['fare_per_passenger'] ?? result['fare'];
+  
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Trip Complete'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (passengerCount > 1) ...[
+            Text(
+              'Passengers: $passengerCount',
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 4),
+            Text('Fare per passenger: ₱${farePerPassenger.toStringAsFixed(2)}'),
+            const Divider(height: 16),
           ],
+          Text('Total Fare: ₱${result['fare'].toStringAsFixed(2)}'),
+          Text('Distance: ${result['distance'].toStringAsFixed(2)} km'),
+          Text('New Balance: ₱${result['new_balance'].toStringAsFixed(2)}'),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
         ),
-      );
-      
-      // Reload current trip
-      await _loadCurrentPassengerTrip();
-      await _loadUserNFCCards(); // Refresh card balance
-    }
+      ],
+    ),
+  );
+  
+  // Reload current trip
+  await _loadCurrentPassengerTrip();
+  await _loadUserNFCCards(); // Refresh card balance
+}
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
