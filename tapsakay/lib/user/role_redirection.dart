@@ -88,7 +88,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
       case 'admin':
         return const AdminDashboard();
       case 'driver':
-        return const DriverDashboard();
+        return DriverDashboard();
       case 'passenger':
         return const PassengerHome();
       default:

@@ -10,7 +10,6 @@ import '../user/login_api.dart';
 import '../services/bus_service.dart';
 import '../services/user_service.dart';
 
-
 class PassengerHome extends StatefulWidget {
   const PassengerHome({super.key});
 
@@ -30,6 +29,7 @@ class _PassengerHomeState extends State<PassengerHome> {
   List<Map<String, dynamic>> _userNFCCards = [];
   bool _isLoadingCards = true;
   Map<String, dynamic>? _currentPassengerTrip;
+  String? _trackingBusId; // Track which bus the passenger is following
 
   @override
   void initState() {
@@ -41,11 +41,17 @@ class _PassengerHomeState extends State<PassengerHome> {
     _loadUserNFCCards();
     _loadCurrentPassengerTrip();
     _subscribeToPassengerTripUpdates();
+    _subscribeToNFCCardUpdates();
   }
+
+  RealtimeChannel? _passengerTripChannel;
+  RealtimeChannel? _nfcCardChannel;
 
   @override
   void dispose() {
     _busesChannel?.unsubscribe();
+    _passengerTripChannel?.unsubscribe();
+    _nfcCardChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -71,7 +77,6 @@ class _PassengerHomeState extends State<PassengerHome> {
         setState(() {
           _currentPassengerTrip = trip;
         });
-      } else {
       }
     } catch (e) {
       print('Error loading current trip: $e');
@@ -79,45 +84,102 @@ class _PassengerHomeState extends State<PassengerHome> {
   }
 
   void _subscribeToPassengerTripUpdates() {
-  final userId = Supabase.instance.client.auth.currentUser?.id;
-  if (userId == null) return;
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
   
-  // Subscribe to updates on passenger's trips
-  Supabase.instance.client
-    .channel('passenger-trip-updates-$userId')
-    .onPostgresChanges(
-      event: PostgresChangeEvent.update,
-      schema: 'public',
-      table: 'passenger_trips',
-      filter: PostgresChangeFilter(
-        type: PostgresChangeFilterType.eq,
-        column: 'passenger_id',
-        value: userId,
-      ),
-      callback: (payload) async {
-        // Reload current trip when updated
-        await _loadCurrentPassengerTrip();
-        
-        // Show notification if driver confirmed
-        final newRecord = payload.newRecord;
-        if (newRecord['driver_confirmed'] == true && mounted) {
-          final passengerCount = newRecord['passenger_count'] ?? 1;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                passengerCount > 1
-                    ? 'Driver confirmed: $passengerCount passengers'
-                    : 'Driver confirmed your boarding',
+    // Subscribe to ALL changes on passenger's trips (insert, update, delete)
+    _passengerTripChannel = Supabase.instance.client
+      .channel('passenger-trip-realtime-$userId')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.all,
+        schema: 'public',
+        table: 'passenger_trips',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'passenger_id',
+          value: userId,
+        ),
+        callback: (payload) async {
+          print('=== REALTIME: passenger_trips changed ===');
+          print('Event: ${payload.eventType}');
+          
+          // Reload current trip when any change happens
+          await _loadCurrentPassengerTrip();
+          
+          if (!mounted) return;
+          
+          final newRecord = payload.newRecord;
+          final oldRecord = payload.oldRecord;
+          
+          // Handle different events
+          if (payload.eventType == PostgresChangeEvent.insert) {
+            // New tap-in created
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('You have boarded the bus!'),
+                backgroundColor: Colors.blue,
+                duration: Duration(seconds: 2),
               ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      },
-    )
-    .subscribe();
-}
+            );
+          } else if (payload.eventType == PostgresChangeEvent.update) {
+            // Check if trip was completed (tap-out)
+            if (oldRecord['status'] == 'ongoing' && newRecord['status'] == 'completed') {
+              final fare = newRecord['fare_amount'] ?? 0.0;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Trip completed! Fare: ₱${double.tryParse(fare.toString())?.toStringAsFixed(2) ?? '0.00'}'),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+              // Reload NFC cards to update balance
+              await _loadUserNFCCards();
+            }
+            // Show notification if driver confirmed
+            else if (newRecord['driver_confirmed'] == true && oldRecord['driver_confirmed'] != true) {
+              final passengerCount = newRecord['passenger_count'] ?? 1;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    passengerCount > 1
+                        ? 'Driver confirmed: $passengerCount passengers'
+                        : 'Driver confirmed your boarding',
+                  ),
+                  backgroundColor: Colors.green,
+                  duration: const Duration(seconds: 3),
+                ),
+              );
+            }
+          }
+        },
+      )
+      .subscribe();
+  }
+  
+  void _subscribeToNFCCardUpdates() {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+    
+    // Subscribe to NFC card balance updates
+    _nfcCardChannel = Supabase.instance.client
+      .channel('nfc-card-realtime-$userId')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.update,
+        schema: 'public',
+        table: 'nfc_cards',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'owner_id',
+          value: userId,
+        ),
+        callback: (payload) async {
+          print('=== REALTIME: nfc_cards balance updated ===');
+          // Reload NFC cards to update balance display
+          await _loadUserNFCCards();
+        },
+      )
+      .subscribe();
+  }
 
   void _subscribeToActiveBuses() {
     _busesChannel = BusService.subscribeToActiveBuses(
@@ -145,41 +207,41 @@ class _PassengerHomeState extends State<PassengerHome> {
   }
 
   Future<void> _loadUserNFCCards() async {
-  try {
-    setState(() => _isLoadingCards = true);
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (userId != null) {
-      final cards = await UserService.getUserNFCCards(userId);
-      setState(() {
-        _userNFCCards = cards;
-        _isLoadingCards = false;
-      });
-    } else {
+    try {
+      setState(() => _isLoadingCards = true);
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId != null) {
+        final cards = await UserService.getUserNFCCards(userId);
+        setState(() {
+          _userNFCCards = cards;
+          _isLoadingCards = false;
+        });
+      } else {
+        setState(() => _isLoadingCards = false);
+      }
+    } catch (e) {
+      print('Error loading NFC cards: $e');
       setState(() => _isLoadingCards = false);
     }
-  } catch (e) {
-    print('Error loading NFC cards: $e');
-    setState(() => _isLoadingCards = false);
   }
-} 
 
-String _formatDuration(String tapInTimeStr) {
-  try {
-    final tapInTime = DateTime.parse(tapInTimeStr).toLocal();
-    final now = DateTime.now();
-    final duration = now.difference(tapInTime);
-    
-    if (duration.isNegative) return '0 min';
-    
-    if (duration.inHours > 0) {
-      return '${duration.inHours}h ${duration.inMinutes % 60}m';
-    } else {
-      return '${duration.inMinutes}m';
+  String _formatDuration(String tapInTimeStr) {
+    try {
+      final tapInTime = DateTime.parse(tapInTimeStr).toLocal();
+      final now = DateTime.now();
+      final duration = now.difference(tapInTime);
+      
+      if (duration.isNegative) return '0 min';
+      
+      if (duration.inHours > 0) {
+        return '${duration.inHours}h ${duration.inMinutes % 60}m';
+      } else {
+        return '${duration.inMinutes}m';
+      }
+    } catch (e) {
+      return 'N/A';
     }
-  } catch (e) {
-    return 'N/A';
   }
-}
 
   Future<void> _getCurrentLocation() async {
     try {
@@ -241,31 +303,208 @@ String _formatDuration(String tapInTimeStr) {
     _mapController.move(_currentLocation, _currentZoom);
   }
 
+  void _showCardBalance() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.4,
+        minChildSize: 0.3,
+        maxChildSize: 0.8,
+        builder: (context, scrollController) => Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'My NFC Cards',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: _isLoadingCards
+                    ? const Center(child: CircularProgressIndicator())
+                    : _userNFCCards.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.credit_card_off, size: 64, color: Colors.grey[400]),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No NFC cards registered',
+                                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Contact admin to register a card',
+                                  style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.builder(
+                            controller: scrollController,
+                            itemCount: _userNFCCards.length,
+                            itemBuilder: (context, index) {
+                              final card = _userNFCCards[index];
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(Icons.credit_card, color: Colors.blue[700]),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Card UID',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.grey[600],
+                                                  ),
+                                                ),
+                                                Text(
+                                                  card['uid']?.toString().substring(0, 8) ?? 'N/A',
+                                                  style: const TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.green[50],
+                                              borderRadius: BorderRadius.circular(12),
+                                            ),
+                                            child: Text(
+                                              'Active',
+                                              style: TextStyle(
+                                                color: Colors.green[700],
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[50],
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            const Text(
+                                              'Current Balance',
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                            Text(
+                                              '₱${(card['balance'] ?? 0.0).toStringAsFixed(2)}',
+                                              style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold,
+                                                color: (card['balance'] ?? 0.0) > 100
+                                                    ? Colors.green
+                                                    : Colors.orange,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _trackBus(String driverId) {
+    final driver = _activeBuses.firstWhere((d) => d['id'] == driverId);
+    final lat = driver['current_latitude'];
+    final lng = driver['current_longitude'];
+    
+    if (lat != null && lng != null) {
+      final busLocation = LatLng(lat.toDouble(), lng.toDouble());
+      _mapController.move(busLocation, 16.0);
+      setState(() {
+        _trackingBusId = driverId;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Tracking bus ${driver['buses']['bus_number']}'),
+          action: SnackBarAction(
+            label: 'Stop',
+            onPressed: () {
+              setState(() {
+                _trackingBusId = null;
+              });
+            },
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width > 600;
     final maxWidth = isDesktop ? 500.0 : double.infinity;
     return Scaffold(
-      
       body: Stack(
         children: [
           // Map
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: _currentLocation,
-            initialZoom: _currentZoom,
-            minZoom: 1.0,  // Add this
-            maxZoom: 18.0, // Add this
-            onPositionChanged: (position, hasGesture) {
-              if (hasGesture) {
-                setState(() {
-                  _currentZoom = position.zoom;
-                });
-              }
-            },
-          ),
-          children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _currentLocation,
+              initialZoom: _currentZoom,
+              minZoom: 1.0,
+              maxZoom: 18.0,
+              onPositionChanged: (position, hasGesture) {
+                if (hasGesture) {
+                  setState(() {
+                    _currentZoom = position.zoom;
+                  });
+                }
+              },
+            ),
+            children: [
               // OpenStreetMap Tiles
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -370,122 +609,81 @@ String _formatDuration(String tapInTimeStr) {
                 ),
                 child: Row(
                   children: [
-GestureDetector(
-  onTap: () {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const ProfilePage()),
-    );
-  },
-  child: Container(
-    width: 40,
-    height: 40,
-    decoration: BoxDecoration(
-      color: Colors.blue[50],
-      shape: BoxShape.circle,
-      border: Border.all(color: Colors.blue[200]!, width: 2),
-    ),
-    child: Center(
-      child: Text(
-        _userName.isNotEmpty ? _userName[0].toUpperCase() : 'P',
-        style: TextStyle(
-          color: Colors.blue[700],
-          fontWeight: FontWeight.bold,
-          fontSize: 18,
-        ),
-      ),
-    ),
-  ),
-),
-
-// Tap Out Button (show only when passenger has ongoing trip)
-if (_currentPassengerTrip != null)
-  Positioned(
-    top: 100,
-    left: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 + 16 : 16,
-    right: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 + 16 : 16,
-    child: SafeArea(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.orange[700],
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.directions_bus, color: Colors.white, size: 24),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Currently on trip',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+                    // Card Balance - Large
+                    GestureDetector(
+                      onTap: () => _showCardBalance(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [Colors.green[400]!, Colors.green[600]!],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(25),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.green.withOpacity(0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.account_balance_wallet, color: Colors.white, size: 22),
+                            const SizedBox(width: 8),
+                            Text(
+                              _isLoadingCards
+                                  ? '...'
+                                  : _userNFCCards.isEmpty
+                                      ? 'No card'
+                                      : '₱${double.tryParse(_userNFCCards.first['balance'].toString())?.toStringAsFixed(2) ?? '0.00'}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
-                  Text(
-                    _currentPassengerTrip!['trips']['buses']['bus_number'] ?? 'N/A',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ElevatedButton(
-              onPressed: _handleTapOut,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: Colors.orange[700],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: const Text('Tap Out'),
-            ),
-          ],
-        ),
-      ),
-    ),
-  ),
+                    
                     const SizedBox(width: 12),
+                    
+                    // Hello Text
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
                             'Hello, $_userName!',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                              fontSize: 15,
                             ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                           Text(
                             'Find your ride',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11,
                               color: Colors.grey[600],
                             ),
                           ),
                         ],
                       ),
                     ),
+                    
+                    // Menu Button
                     IconButton(
                       icon: Icon(Icons.menu, color: Colors.grey[800]),
                       onPressed: () => _showMenu(context),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
                     ),
                   ],
                 ),
@@ -551,938 +749,95 @@ if (_currentPassengerTrip != null)
             ),
           ),
 
-// Bottom Sheet - Show Current Trip, Nearby Bus, or Active Buses
-Positioned(
-  bottom: 0,
-  left: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
-  right: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
-  child: _currentPassengerTrip != null
-      ? _buildOnboardSheet() // Passenger is already on a trip
-      : _getNearestBus() != null
-          ? _buildBoardBusSheet(_getNearestBus()!) // Bus is nearby (≤5m)
-          : _buildActiveBusesSheet(), // Show all active buses
-),
+          // Bottom Sheet - Show Current Trip, Nearby Bus, or Active Buses
+          Positioned(
+            bottom: 0,
+            left: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
+            right: isDesktop ? (MediaQuery.of(context).size.width - maxWidth) / 2 : 0,
+            child: _currentPassengerTrip != null
+                ? _buildOnboardSheet() // Passenger is already on a trip
+                : _getNearestBus() != null
+                    ? _buildBoardBusSheet(_getNearestBus()!) // Bus is nearby (≤5m)
+                    : _buildActiveBusesSheet(), // Show all active buses
+          ),
         ],
       ),
     );
   }
 
-    // Add this helper method in your _PassengerHomeState class
-    double _calculateDistance(LatLng busLocation) {
-      return Geolocator.distanceBetween(
-        _currentLocation.latitude,
-        _currentLocation.longitude,
-        busLocation.latitude,
-        busLocation.longitude,
-      ); // Returns distance in meters
-    }
+  // Add this helper method in your _PassengerHomeState class
+  double _calculateDistance(LatLng busLocation) {
+    return Geolocator.distanceBetween(
+      _currentLocation.latitude,
+      _currentLocation.longitude,
+      busLocation.latitude,
+      busLocation.longitude,
+    ); // Returns distance in meters
+  }
 
-    String _formatDistance(double meters) {
-      if (meters < 1000) {
-        return '${meters.round()} m';
-      } else {
-        return '${(meters / 1000).toStringAsFixed(1)} km';
+  String _formatDistance(double meters) {
+    if (meters < 1000) {
+      return '${meters.round()} m';
+    } else {
+      return '${(meters / 1000).toStringAsFixed(1)} km';
+    }
+  }
+  
+  bool _isNearBus(Map<String, dynamic> driver) {
+    final lat = driver['current_latitude'];
+    final lng = driver['current_longitude'];
+    
+    if (lat == null || lng == null) return false;
+    
+    final distance = Geolocator.distanceBetween(
+      _currentLocation.latitude,
+      _currentLocation.longitude,
+      lat.toDouble(),
+      lng.toDouble(),
+    );
+    
+    // Check if within 5 meters
+    return distance <= 5500.0;
+  }
+
+  Map<String, dynamic>? _getNearestBus() {
+    for (var driver in _activeBuses) {
+      if (_isNearBus(driver)) {
+        return driver;
       }
     }
-    
-    bool _isNearBus(Map<String, dynamic> driver) {
-  final lat = driver['current_latitude'];
-  final lng = driver['current_longitude'];
-  
-  if (lat == null || lng == null) return false;
-  
-  final distance = Geolocator.distanceBetween(
-    _currentLocation.latitude,
-    _currentLocation.longitude,
-    lat.toDouble(),
-    lng.toDouble(),
-  );
-  
-  // Check if within 5 meters
-  return distance <= 5500.0;
-}
-
-Map<String, dynamic>? _getNearestBus() {
-  for (var driver in _activeBuses) {
-    if (_isNearBus(driver)) {
-      return driver;
-    }
+    return null;
   }
-  return null;
-}
 
-// Build Active Buses Sheet (original bottom sheet)
-Widget _buildActiveBusesSheet() {
-  return Container(
-    padding: const EdgeInsets.all(16),
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black12,
-          blurRadius: 10,
-          offset: Offset(0, -4),
-        ),
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Text(
-              'Active Buses Nearby',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 6,
-              ),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: Colors.green[600],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${_activeBuses.length} Online',
-                    style: TextStyle(
-                      color: Colors.green[700],
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        _isLoadingBuses
-            ? const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: CircularProgressIndicator(),
-                ),
-              )
-            : _activeBuses.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(20.0),
-                      child: Text(
-                        'No active buses nearby',
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  )
-                : SizedBox(
-                    height: 95,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _activeBuses.length,
-                      itemBuilder: (context, index) {
-                        final driver = _activeBuses[index];
-                        final bus = driver['buses'];
-                        if (bus == null) return const SizedBox.shrink();
-                        
-                        return Container(
-                          width: 200,
-                          margin: const EdgeInsets.only(right: 12),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.blue[200]!),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue[700],
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(
-                                  Icons.directions_bus,
-                                  color: Colors.white,
-                                  size: 24,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      bus['bus_number'] ?? 'N/A',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      bus['route_name'] ?? 'No route',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      _formatDistance(_calculateDistance(
-                                        LatLng(
-                                          driver['current_latitude'].toDouble(),
-                                          driver['current_longitude'].toDouble(),
-                                        ),
-                                      )),
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.blue[700],
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-      ],
-    ),
-  );
-}
-
-// Build Board Bus Sheet (when passenger is near a bus)
-Widget _buildBoardBusSheet(Map<String, dynamic> driver) {
-  final bus = driver['buses'];
-  final driverUser = driver['users'];
-  final distance = _calculateDistance(
-    LatLng(
-      driver['current_latitude'].toDouble(),
-      driver['current_longitude'].toDouble(),
-    ),
-  );
-  
-  return Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Colors.blue[700]!, Colors.blue[500]!],
-      ),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.2),
-          blurRadius: 15,
-          offset: const Offset(0, -4),
-        ),
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Pulsing indicator
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: Colors.greenAccent,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.greenAccent.withOpacity(0.5),
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'BUS NEARBY',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Bus Info
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.directions_bus,
-                color: Colors.white,
-                size: 32,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    bus['bus_number'] ?? 'N/A',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    bus['route_name'] ?? 'No route',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 14,
-                    ),
-                  ),
-                  if (driverUser != null)
-                    Text(
-                      'Driver: ${driverUser['full_name']}',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 12,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        
-        // Distance indicator
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.location_on, color: Colors.white.withOpacity(0.9), size: 20),
-              const SizedBox(width: 8),
-              Text(
-                _formatDistance(distance),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              Text(
-                ' away',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Board Button
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton.icon(
-            onPressed: () => _handleTapIn(driver),
-            icon: const Icon(Icons.login, color: Colors.blue),
-            label: const Text(
-              'Board This Bus',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 0,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        
-        // View other buses button
-        TextButton(
-          onPressed: () {
-            setState(() {
-              // Force show all buses by temporarily disabling geofence check
-              // You can implement a flag like _showAllBuses if needed
-            });
-          },
-          child: Text(
-            'View all active buses',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.9),
-              fontSize: 14,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
-// Build Onboard Sheet (when passenger has active trip)
-Widget _buildOnboardSheet() {
-  final trip = _currentPassengerTrip!['trips'];
-  final bus = trip['buses'];
-  final nfcCard = _currentPassengerTrip!['nfc_cards'];
-
-  
-  // 🚀 Check if driver has confirmed
-  final isConfirmed = _currentPassengerTrip!['driver_confirmed'] == true;
-  final passengerCount = _currentPassengerTrip!['passenger_count'] ?? 1;
-  
-  // 🚀 If not confirmed, show waiting state
-  if (!isConfirmed) {
+  // Build Active Buses Sheet (original bottom sheet)
+  Widget _buildActiveBusesSheet() {
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.orange[700]!, Colors.orange[500]!],
-        ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 15,
-            offset: const Offset(0, -4),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Pulsing indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 2,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Text(
-                  'WAITING FOR DRIVER',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          
-          // Bus Info
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.directions_bus,
-                  color: Colors.white,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      bus['bus_number'] ?? 'N/A',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      bus['route_name'] ?? 'No route',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          
-          // Waiting message
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Column(
-              children: [
-                Icon(Icons.hourglass_empty, color: Colors.white.withOpacity(0.9), size: 32),
-                const SizedBox(height: 8),
-                Text(
-                  'Driver is confirming your boarding',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Please wait...',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.7),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          
-          // Info text
-          Text(
-            'The driver will confirm the number of passengers traveling with you.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.8),
-              fontSize: 12,
-            ),
-          ),
-
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton.icon(
-              onPressed: null, // Disabled
-              icon: Icon(Icons.exit_to_app, color: Colors.grey[400]),
-              label: Text(
-                'Waiting for Confirmation',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[400],
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey[200],
-                disabledBackgroundColor: Colors.grey[200],
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                elevation: 0,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  // 🚀 Confirmed state - show normal onboard UI
-  return Container(
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Colors.green[700]!, Colors.green[500]!],
-      ),
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.2),
-          blurRadius: 15,
-          offset: const Offset(0, -4),
-        ),
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Status Badge
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                passengerCount > 1 
-                    ? 'ON BOARD ($passengerCount passengers)' 
-                    : 'ON BOARD',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        
-        // Bus Info
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.directions_bus,
-                color: Colors.white,
-                size: 32,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    bus['bus_number'] ?? 'N/A',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    bus['route_name'] ?? 'No route',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        
-        // Trip Info Cards
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    Icon(Icons.access_time, color: Colors.white.withOpacity(0.9), size: 20),
-                    const SizedBox(height: 4),
-                      Text(
-                        _formatDuration(_currentPassengerTrip!['tap_in_time']),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Duration',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
-                          fontSize: 11,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    Icon(Icons.credit_card, color: Colors.white.withOpacity(0.9), size: 20),
-                    const SizedBox(height: 4),
-                    Text(
-                      '₱${(nfcCard['balance'] ?? 0.0).toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Balance',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        
-        // 🚀 Show passenger count if > 1
-        if (passengerCount > 1) ...[
-          const SizedBox(height: 12),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.people, color: Colors.white.withOpacity(0.9), size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  '$passengerCount passengers traveling together',
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.9),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-        
-        const SizedBox(height: 20),
-        
-        // Tap Out Button
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton.icon(
-            onPressed: _handleTapOut,
-            icon: const Icon(Icons.exit_to_app, color: Colors.green),
-            label: const Text(
-              'Tap Out',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.green,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 0,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
-
- void _showBusInfo(Map<String, dynamic> driver) {
-  final bus = driver['buses'];
-  if (bus == null) return;
-  
-  final driverUser = driver['users'];
-  final distance = _calculateDistance(
-    LatLng(
-      driver['current_latitude'].toDouble(),
-      driver['current_longitude'].toDouble(),
-    ),
-  );
-  
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    builder: (context) => Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(16),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 10,
+            offset: Offset(0, -4),
+          ),
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 24),
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.directions_bus,
-                  color: Colors.blue[700],
-                  size: 32,
+              const Text(
+                'Active Buses Nearby',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      bus['bus_number'] ?? 'N/A',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      bus['route_name'] ?? 'No route',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    if (driverUser != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Driver: ${driverUser['full_name']}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[500],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on, size: 14, color: Colors.grey[500]),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatDistance(distance),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: distance <= 5.0 ? Colors.green[700] : Colors.grey[500],
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'away',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[400],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -1504,7 +859,7 @@ Widget _buildOnboardSheet() {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      'On Duty',
+                      '${_activeBuses.length} Online',
                       style: TextStyle(
                         color: Colors.green[700],
                         fontSize: 12,
@@ -1516,216 +871,657 @@ Widget _buildOnboardSheet() {
               ),
             ],
           ),
-          const SizedBox(height: 24),
-          
-          // Show different button based on distance
-          if (distance <= 5.0) ...[
-            SizedBox(
-              width: double.infinity,
-              height: 50,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _handleTapIn(driver);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue[700],
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+          const SizedBox(height: 16),
+          _isLoadingBuses
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20.0),
+                    child: CircularProgressIndicator(),
                   ),
-                ),
-                child: const Text(
-                  'Board This Bus',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ] else ...[
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.orange[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange[200]!),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.info_outline, color: Colors.orange[700]),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Get closer to the bus to board (within 5m)',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.orange[900],
+                )
+              : _activeBuses.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20.0),
+                        child: Text(
+                          'No active buses nearby',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    )
+                  : SizedBox(
+                      height: 95,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _activeBuses.length,
+                        itemBuilder: (context, index) {
+                          final driver = _activeBuses[index];
+                          final bus = driver['buses'];
+                          if (bus == null) return const SizedBox.shrink();
+                          
+                          final distance = _calculateDistance(
+                            LatLng(
+                              driver['current_latitude'] ?? 0,
+                              driver['current_longitude'] ?? 0,
+                            ),
+                          );
+                          
+                          return Container(
+                            width: 280,
+                            margin: const EdgeInsets.only(right: 12),
+                            child: Card(
+                              elevation: 4,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blue[50],
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Icon(
+                                            Icons.directions_bus,
+                                            color: Colors.blue[700],
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Text(
+                                          _formatDistance(distance),
+                                          style: TextStyle(
+                                            color: Colors.grey[600],
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      bus['bus_number'] ?? 'N/A',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      bus['plate_number'] ?? 'No plate',
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
                       ),
                     ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TripHistoryPage(),
                   ),
-                ],
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.grey[100],
+                foregroundColor: Colors.grey[700],
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
+              child: const Text('View Trip History'),
             ),
-          ],
+          ),
         ],
       ),
-    ),
-  );
-}
-
-  
-
-
-Future<void> _handleTapIn(Map<String, dynamic> driver) async {
-  
-  
-  // Check if user has NFC cards
-  if (_userNFCCards.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('No NFC card found. Please register a card first.'),
-        backgroundColor: Colors.red,
-      ),
     );
-    return;
   }
-  
-  // Get first active, non-blocked card
-  final activeCard = _userNFCCards.firstWhere(
-    (card) => card['is_active'] == true && card['is_blocked'] != true,
-    orElse: () => {},
-  );
-  
-  if (activeCard.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('No active NFC card found.'),
-        backgroundColor: Colors.red,
-      ),
-    );
-    return;
-  }
-  
-  // Get current location
-  Position position = await Geolocator.getCurrentPosition();
-  
-  final userId = Supabase.instance.client.auth.currentUser?.id;
-  if (userId == null) return;
-  
-  // Get trip from driver
-  final driverTrip = driver['current_trip_id'];
-  if (driverTrip == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Driver has no active trip'),
-        backgroundColor: Colors.red,
-      ),
-    );
-    return;
-  }
-  
-  try {
-    final result = await PassengerTapService.tapIn(
-      passengerId: userId,
-      nfcCardId: activeCard['id'],
-      tripId: driverTrip,
-      busId: driver['buses']['id'],
-      driverId: driver['id'],
-      latitude: position.latitude,
-      longitude: position.longitude,
-    );
+
+  Widget _buildBoardBusSheet(Map<String, dynamic> driver) {
+    final bus = driver['buses'];
+    if (bus == null) return const SizedBox.shrink();
     
-if (result['success']) {
-  // Show waiting for confirmation message
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Row(
-        children: [
-          const SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              color: Colors.white,
-              strokeWidth: 2,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(result['message']),
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: 16 + MediaQuery.of(context).padding.bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 10,
+            offset: Offset(0, -4),
           ),
         ],
       ),
-      backgroundColor: Colors.orange[700],
-      duration: const Duration(seconds: 3),
-    ),
-  );
-  
-  // 🚀 FIX: Reload current trip and cards
-  await _loadCurrentPassengerTrip();
-  await _loadUserNFCCards();
-}
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(e.toString()),
-        backgroundColor: Colors.red,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.directions_bus,
+                  color: Colors.green[700],
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      bus['bus_number'] ?? 'N/A',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Bus is nearby - Tap to board',
+                      style: TextStyle(
+                        color: Colors.green[600],
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+                  ],
       ),
     );
   }
-}
+
+  Widget _buildOnboardSheet() {
+    if (_currentPassengerTrip == null) return const SizedBox.shrink();
+    
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 16,
+        bottom: 16 + MediaQuery.of(context).padding.bottom,
+      ),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 10,
+            offset: Offset(0, -4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.directions_bus,
+                  color: Colors.orange[700],
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Currently on board',
+                      style: TextStyle(
+                        color: Colors.orange[600],
+                        fontSize: 14,
+                      ),
+                    ),
+                    Text(
+                      _currentPassengerTrip!['trips']['buses']['bus_number'] ?? 'N/A',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Tap out when you reach your destination',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Trip Duration',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        _formatDuration(_currentPassengerTrip!['created_at']),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        'Fare Deducted',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        '₱${(_currentPassengerTrip!['fare'] ?? 0.0).toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+                  ],
+      ),
+    );
+  }
+
+  Future<void> _handleTapIn(Map<String, dynamic> driver) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+      
+      // Check if user has NFC cards
+      if (_userNFCCards.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No NFC card registered. Please contact admin.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      
+      // Use first NFC card
+      final card = _userNFCCards.first;
+      
+      // Check card balance
+      final balance = card['balance'] ?? 0.0;
+      if (balance < 10.0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Insufficient balance. Please top up your card.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      
+      // Get current location
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      // Get active trip for the bus
+      final trips = await Supabase.instance.client
+          .from('trips')
+          .select()
+          .eq('driver_id', driver['id'])
+          .eq('status', 'active')
+          .maybeSingle();
+      
+      if (trips == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No active trip found for this bus.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      
+      // Create passenger trip
+      await PassengerTapService.tapIn(
+        passengerId: userId,
+        nfcCardId: card['id'],
+        tripId: trips['id'],
+        busId: driver['buses']['id'],
+        driverId: driver['id'],
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Successfully tapped in!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      
+      // Reload current trip
+      await _loadCurrentPassengerTrip();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to tap in: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleTapOut() async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+      
+      if (_currentPassengerTrip == null) return;
+      
+      // Get current location
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      // Get trip info
+      final trip = _currentPassengerTrip!['trips'];
+      if (trip == null) return;
+      
+      // Get bus_id and driver_id from the trip, not passenger_trips
+      final busId = trip['bus_id'] ?? '';
+      final driverId = trip['driver_id'] ?? '';
+      
+      await PassengerTapService.tapOut(
+        passengerId: userId,
+        nfcCardId: _currentPassengerTrip!['nfc_card_id'],
+        tripId: trip['id'],
+        busId: busId,
+        driverId: driverId,
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Successfully tapped out!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+      
+      // Reload current trip
+      await _loadCurrentPassengerTrip();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to tap out: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  void _showBusInfo(Map<String, dynamic> driver) {
+    final bus = driver['buses'];
+    if (bus == null) return;
+    
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue[50],
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    Icons.directions_bus,
+                    color: Colors.blue[700],
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        bus['bus_number'] ?? 'N/A',
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        bus['plate_number'] ?? 'No plate',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: const Icon(Icons.person),
+              title: Text('Driver: ${driver['full_name'] ?? 'N/A'}'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.phone),
+              title: Text('Contact: ${driver['phone_number'] ?? 'N/A'}'),
+            ),
+            const SizedBox(height: 16),
+            if (_currentPassengerTrip == null)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _handleTapIn(driver);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Board This Bus',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            if (_trackingBusId == driver['id'])
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _trackingBusId = null;
+                    });
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[700],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Stop Tracking',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              )
+            else
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _trackBus(driver['id']);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[700],
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Track Bus',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   void _showMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
+        padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.credit_card, color: Colors.blue[700]),
-              title: const Text('My NFC Card'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+              leading: const Icon(Icons.history),
+              title: const Text('Trip History'),
               onTap: () {
                 Navigator.pop(context);
-                _showNFCCardsSheet();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const TripHistoryPage(),
+                  ),
+                );
               },
             ),
-ListTile(
-  leading: Icon(Icons.history, color: Colors.blue[700]),
-  title: const Text('Trip History'),
-  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-  onTap: () {
-    Navigator.pop(context);
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const TripHistoryPage()),
-    );
-  },
-),
-          ListTile(
-            leading: Icon(Icons.person, color: Colors.blue[700]),
-            title: const Text('Profile'),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const ProfilePage()),
-              );
-            },
-          ),
+            ListTile(
+              leading: const Icon(Icons.account_circle),
+              title: const Text('Profile'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ProfilePage(),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.credit_card),
+              title: const Text('My NFC Cards'),
+              onTap: () {
+                Navigator.pop(context);
+                _showCardBalance();
+              },
+            ),
             const Divider(),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('Logout'),
+              title: const Text('Logout', style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.pop(context);
                 _handleLogout();
@@ -1736,281 +1532,4 @@ ListTile(
       ),
     );
   }
-
-  void _showNFCCardsSheet() {
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (context) => DraggableScrollableSheet(
-      initialChildSize: 0.7,
-      minChildSize: 0.5,
-      maxChildSize: 0.9,
-      builder: (context, scrollController) => Container(
-        padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'My NFC Cards',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _loadUserNFCCards,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _isLoadingCards
-                  ? const Center(child: CircularProgressIndicator())
-                  : _userNFCCards.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.credit_card_off, 
-                                size: 64, 
-                                color: Colors.grey[400]
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No NFC cards found',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          controller: scrollController,
-                          itemCount: _userNFCCards.length,
-                          itemBuilder: (context, index) {
-                            final card = _userNFCCards[index];
-                            return _buildNFCCardItem(card);
-                          },
-                        ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-Widget _buildNFCCardItem(Map<String, dynamic> card) {
-  final balance = (card['balance'] ?? 0.0).toDouble();
-  final isActive = card['is_active'] ?? false;
-  final isBlocked = card['is_blocked'] ?? false;
-  
-  return Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        colors: isActive && !isBlocked
-            ? [Colors.blue[700]!, Colors.blue[500]!]
-            : [Colors.grey[600]!, Colors.grey[400]!],
-      ),
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.1),
-          blurRadius: 8,
-          offset: const Offset(0, 4),
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.credit_card, color: Colors.white, size: 24),
-                const SizedBox(width: 8),
-                Text(
-                  card['card_type'] ?? 'Unknown',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isBlocked
-                    ? Colors.red[300]
-                    : (isActive ? Colors.green[300] : Colors.orange[300]),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                isBlocked ? 'Blocked' : (isActive ? 'Active' : 'Inactive'),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text(
-          card['card_number'] ?? 'N/A',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 2,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Balance',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '₱${balance.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            if (card['discount_type'] != null && card['discount_type'] != 'none')
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.discount, color: Colors.white, size: 16),
-                    const SizedBox(width: 4),
-                    Text(
-                      card['discount_type'],
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-
-Future<void> _handleTapOut() async {
-  if (_currentPassengerTrip == null) return;
-  
-  // Get current location
-  Position position = await Geolocator.getCurrentPosition();
-  
-  final userId = Supabase.instance.client.auth.currentUser?.id;
-  if (userId == null) return;
-  
-  final trip = _currentPassengerTrip!['trips'];
-  
-  try {
-    final result = await PassengerTapService.tapOut(
-      passengerId: userId,
-      nfcCardId: _currentPassengerTrip!['nfc_card_id'],
-      tripId: _currentPassengerTrip!['trip_id'],
-      busId: trip['buses']['id'],
-      driverId: trip['drivers']['id'],
-      latitude: position.latitude,
-      longitude: position.longitude,
-    );
-    
-if (result['success']) {
-  final passengerCount = result['passenger_count'] ?? 1;
-  final farePerPassenger = result['fare_per_passenger'] ?? result['fare'];
-  
-  showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Trip Complete'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (passengerCount > 1) ...[
-            Text(
-              'Passengers: $passengerCount',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text('Fare per passenger: ₱${farePerPassenger.toStringAsFixed(2)}'),
-            const Divider(height: 16),
-          ],
-          Text('Total Fare: ₱${result['fare'].toStringAsFixed(2)}'),
-          Text('Distance: ${result['distance'].toStringAsFixed(2)} km'),
-          Text('New Balance: ₱${result['new_balance'].toStringAsFixed(2)}'),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('OK'),
-        ),
-      ],
-    ),
-  );
-  
-  // Reload current trip
-  await _loadCurrentPassengerTrip();
-  await _loadUserNFCCards(); // Refresh card balance
-}
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(e.toString()),
-        backgroundColor: Colors.red,
-      ),
-    );
-  }
-}
 }

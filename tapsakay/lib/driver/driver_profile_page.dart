@@ -418,6 +418,15 @@ Future<void> _saveProfile() async {
                                 onTap: () => _showAccountDetails(),
                               ),
                             ),
+                            const SizedBox(height: 12),
+                            FadeTransition(
+                              opacity: _fadeAnimation,
+                              child: _buildMenuOption(
+                                icon: Icons.logout,
+                                label: 'Logout',
+                                onTap: () => _showLogoutConfirmation(),
+                              ),
+                            ),
                           ],
 
                           // Edit Form
@@ -630,6 +639,48 @@ Future<void> _saveProfile() async {
         ),
         filled: true,
         fillColor: Colors.grey[50],
+      ),
+    );
+  }
+
+  void _showLogoutConfirmation() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context); // Close dialog
+              try {
+                await LoginApi.logout();
+                // Clear navigation stack and ensure login screen
+                if (mounted) {
+                  Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    '/',
+                    (route) => false,
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Error logging out: ${e.toString()}'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Logout', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }

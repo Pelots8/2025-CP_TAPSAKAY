@@ -39,6 +39,9 @@ dependencies:
   # Backend
   supabase_flutter: ^2.6.0
   
+  # NFC
+  flutter_nfc_kit: ^3.3.0
+  
   # UI Libraries
   flutter_svg: ^2.0.10
   google_fonts: ^6.2.1

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:tapsakay/admin/admin_buses_page.dart';
 import 'package:tapsakay/admin/admin_drivers_page.dart';
 import 'package:tapsakay/admin/admin_nfc_cards_page.dart';
+import 'package:tapsakay/admin/admin_nfc_page.dart';
 import 'package:tapsakay/admin/admin_transactions_page.dart';
 import 'package:tapsakay/admin/admin_trips_page.dart';
 import 'package:tapsakay/admin/admin_users_page.dart';
@@ -290,11 +291,11 @@ final List<Widget> pages = [
   _buildDashboardContent(),
   const AdminBusesPage(),
   const AdminDriversPage(),
-  const AdminTransactionsPage(),  // ← NEW
+  const AdminTransactionsPage(),
   const AdminUsersPage(),
-  const AdminNFCCardsPage(),
+  const AdminNFCPage(),
   const AdminLiveMapPage(),
-  const AdminTripsPage(),  // ← ADD THIS NEW PAGE
+  const AdminTripsPage(),
 ];
 
     // Show loading indicator until user profile and initial data is loaded
